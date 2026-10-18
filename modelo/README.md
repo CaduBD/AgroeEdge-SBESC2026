@@ -4,7 +4,15 @@ Rodar em ordem (Python 3, `pip install pandas scikit-learn tabulate tensorflow`)
 
 1. `python3 01_gerar_dataset.py` gera `dados/dataset_uva.csv` a partir de `dados/petrolina_clima_2000_2009.csv` (17.440 dias rotulados).
 2. `python3 02_comparar_modelos.py` treina MLP, SVM e Random Forest e gera `resultados_comparacao.md`.
-3. `python3 03_treinar_mlp_int8.py` treina a MLP no Keras, quantiza em INT8 e gera `../firmware/modelo/*.h` e `resultados_mlp_int8.md`.
+3. `python3 03_treinar_mlp.py` treina a MLP final no Keras, gera `../firmware/modelo/agroedge_pesos.py` e confere o `classificador.py` no teste (`resultados_mlp.md`).
+
+## Firmware (MicroPython)
+Em `../firmware/modelo/`, copie para a placa:
+- `agroedge_pesos.py`: pesos, bias, médias e desvios (gerado pelo script 03, não editar).
+- `classificador.py`: a inferência da MLP em Python puro; use `classificador.classificar(x)`.
+- `teste_classificador.py`: roda 6 dias de 2009 na placa e mostra classe, tempo e memória livre.
+
+O modelo roda em float, sem TensorFlow Lite nem quantização: são 435 parâmetros (1,9 KB em `array('f')`). Conferido no MicroPython 1.30 para Linux compilado com float de 32 bits, como no RP2040: mesma classe que o Keras nos 1.744 dias de teste (90,7%). O tempo na BitDogLab ainda precisa ser medido com o `teste_classificador.py`.
 
 ## Regra de rotulagem
 Balanço hídrico diário do solo do FAO-56 (cap. 8, eq. 84 e 85), sobre o clima real de Petrolina 2000–2009 (DataClimaBR):

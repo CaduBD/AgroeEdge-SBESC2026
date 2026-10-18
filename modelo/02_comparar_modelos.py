@@ -14,7 +14,6 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, recall_score, confusion_matrix
-from sklearn.utils.class_weight import compute_sample_weight
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 FEATURES = ["dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
@@ -50,7 +49,6 @@ def main():
     sc = StandardScaler().fit(tr[FEATURES])
     Xtr, Xva, Xte = (sc.transform(d[FEATURES]) for d in (tr, va, te))
     ytr, yva, yte = tr.classe.values, va.classe.values, te.classe.values
-    peso = compute_sample_weight("balanced", ytr)
 
     # hiperparâmetros escolhidos pela validação (busca pequena, ver candidatos)
     candidatos = {
@@ -65,10 +63,9 @@ def main():
     for nome, lista in candidatos.items():
         melhor = None
         for m in lista:
-            if nome == "MLP":
-                m.fit(Xtr, ytr)          # MLPClassifier não aceita peso; desbalanceamento tratado no Keras
-            else:
-                m.fit(Xtr, ytr, sample_weight=None if nome.startswith("SVM") else peso)
+            # SVM e RF compensam o desbalanceamento com class_weight="balanced";
+            # o MLPClassifier não tem essa opção (na MLP final, no Keras, ela é usada)
+            m.fit(Xtr, ytr)
             f1 = f1_score(yva, m.predict(Xva), average="macro")
             if melhor is None or f1 > melhor[0]:
                 melhor = (f1, m)
@@ -96,7 +93,7 @@ def main():
         for nome, cm in matrizes.items():
             f.write(f"## Matriz de confusão: {nome} (linhas = real, colunas = predito)\n\n")
             f.write(pd.DataFrame(cm, index=NOMES, columns=NOMES).to_markdown() + "\n\n")
-        f.write("Memória: estimativa em float32 dos parâmetros embarcados, sem o runtime (TFLM ou código da árvore).\n")
+        f.write("Memória: estimativa em float32 dos parâmetros embarcados, sem o código que faz a inferência.\n")
     for nome, cm in matrizes.items():
         print(nome); print(cm)
 

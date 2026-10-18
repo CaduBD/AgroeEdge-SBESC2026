@@ -2,9 +2,9 @@
 
 | modelo        | config                  |   acuracia |   f1_macro |   rec_adequado |   rec_moderado |   rec_critico |   memoria_kb |   us_por_amostra_pc |
 |:--------------|:------------------------|-----------:|-----------:|---------------:|---------------:|--------------:|-------------:|--------------------:|
-| MLP           | (16,)                   |      0.914 |      0.873 |          0.941 |          0.838 |         0.861 |        1.699 |               0.429 |
-| SVM (RBF)     | C=10, 3512 vetores      |      0.907 |      0.866 |          0.918 |          0.831 |         0.944 |      342.98  |             202.906 |
-| Random Forest | 100 árvores, prof. None |      0.924 |      0.87  |          0.965 |          0.797 |         0.856 |     1000.82  |              26.52  |
+| MLP           | (16,)                   |      0.914 |      0.873 |          0.941 |          0.838 |         0.861 |        1.699 |               0.448 |
+| SVM (RBF)     | C=10, 3512 vetores      |      0.907 |      0.866 |          0.918 |          0.831 |         0.944 |      342.98  |             195.177 |
+| Random Forest | 100 árvores, prof. None |      0.924 |      0.87  |          0.965 |          0.797 |         0.856 |     1000.82  |              27.313 |
 
 ## Matriz de confusão: MLP (linhas = real, colunas = predito)
 
@@ -30,4 +30,4 @@
 | moderado |         32 |        231 |        27 |
 | critico  |          0 |         31 |       185 |
 
-Memória: estimativa em float32 dos parâmetros embarcados, sem o runtime (TFLM ou código da árvore).
+Memória: estimativa em float32 dos parâmetros embarcados, sem o código que faz a inferência.
