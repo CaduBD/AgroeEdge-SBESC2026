@@ -16,7 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, recall_score, confusion_matrix
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
-FEATURES = ["dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
+FEATURES = ["TAW", "dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
             "vento", "radiacao", "dias_sem_irrigar",
             "ETc_3d", "chuva_3d", "irrigacao_3d", "ETc_7d", "chuva_7d", "irrigacao_7d", "saldo_7d",
             "ETc_14d", "chuva_14d", "irrigacao_14d", "saldo_14d"]
