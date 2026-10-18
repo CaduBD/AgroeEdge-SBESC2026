@@ -8,11 +8,13 @@ O fluxo inteiro é uma linha de montagem:
 
 ```
 clima real de Petrolina (CSV)
-   → 01: simula irrigação e calcula a água no solo dia a dia → rótulo (adequado / moderado / crítico)
+   → 01: sorteia solo, raiz, data de poda e produtor; calcula a água no solo dia a dia → rótulo
    → 02: treina MLP, SVM e Random Forest e compara
    → 03: treina a MLP final e exporta os pesos para MicroPython
-   → firmware/modelo/: classificador.py + agroedge_pesos.py, o que a BitDogLab usa para classificar
+   → firmware/modelo/: classificador.py + agroedge_pesos.py + config_local.py, o que a BitDogLab usa
 ```
+
+O modelo é **geral**: o mesmo arquivo de pesos serve para qualquer área do Vale. O que muda de um local para outro (tipo de solo, raiz e data da poda) fica no `config_local.py` da placa, e o TAW do solo entra como uma das entradas da rede.
 
 A pergunta que o classificador responde é: **"com o clima e a irrigação dos últimos dias, como está a água no solo hoje?"**
 
@@ -26,22 +28,24 @@ Para treinar um classificador, cada dia precisa de uma resposta certa (o rótulo
 ### 1.2 Os parâmetros (topo do arquivo)
 | Parâmetro | Valor | O que é |
 |---|---|---|
-| `PODAS` | 15/01 e 15/07 | início de cada ciclo da uva (ASSUMIDO) |
 | `CICLO_DIAS` | 109 | duração do ciclo, de Ávila Netto et al. (2000) |
-| `ZR_M` | 0,6 m | profundidade das raízes (ASSUMIDO) |
-| `AGUA_DISP_M3M3` | 0,11 | quanta água o solo segura por metro (ASSUMIDO) |
+| `CICLOS_POR_ANO` | 48 | quantos ciclos simulados começam em cada ano |
+| `AGUA_DISP_FAIXA` | 0,06 a 0,18 m³/m³ | faixa sorteada de água que o solo segura, de arenoso a Vertissolo (ASSUMIDO) |
+| `ZR_FAIXA` | 0,4 a 0,8 m | faixa sorteada de profundidade das raízes (ASSUMIDO) |
 | `P_DEPLECAO` | 0,35 | fração que a planta tira sem sofrer (FAO-56, ASSUMIDO) |
 | `KS_CRITICO` | 0,5 | a partir de onde chamamos de crítico (ASSUMIDO) |
-| `CENARIOS_POR_CICLO` | 8 | quantos produtores simulados por ciclo |
 | `SEMENTE` | 42 | faz o sorteio sair sempre igual (resultado reproduzível) |
 
-Com eles, o script calcula três números que definem o "tanque de água" do solo:
+Solo e raiz não são números fixos: cada ciclo sorteia os seus. Assim o modelo vê de tudo, do solo arenoso de Petrolina ao Vertissolo de Juazeiro, e aprende a usar o TAW que recebe.
 
-- **TAW** (água total disponível) = 1000 × 0,11 × 0,6 = **66 mm**. É o tanque cheio.
-- **RAW** (água facilmente disponível) = 0,35 × 66 = **23,1 mm**. Até gastar isso, a planta não sofre.
-- **Dr crítico** = 66 − 0,5 × (1 − 0,35) × 66 = **44,5 mm**. Passando disso, a planta transpira menos da metade do normal.
+### 1.2.1 `solo(agua_disp, zr)`: o "tanque de água" do solo
+Com a água disponível e a raiz de um ciclo, calcula três números:
 
-Pense no solo como uma caixa d'água de 66 mm. `Dr` (depleção) é **quanto já foi gasto**. Dr = 0 é caixa cheia; Dr = 66 é caixa vazia.
+- **TAW** (água total disponível) = 1000 × água × raiz. É o tanque cheio. Exemplo com 0,11 e 0,6 m: **66 mm**.
+- **RAW** (água facilmente disponível) = 0,35 × TAW. Até gastar isso, a planta não sofre. No exemplo: **23,1 mm**.
+- **Dr crítico** = TAW − 0,5 × (1 − 0,35) × TAW. Passando disso, a planta transpira menos da metade do normal. No exemplo: **44,5 mm**.
+
+Pense no solo como uma caixa d'água do tamanho do TAW. `Dr` (depleção) é **quanto já foi gasto**. Dr = 0 é caixa cheia; Dr = TAW é caixa vazia. Nos ciclos simulados o TAW vai de 25 a 140 mm.
 
 ### 1.3 `kc_uva(dap)`
 A equação de Ávila Netto: `Kc = −0,00008·DAP² + 0,0089·DAP + 0,488`. DAP é o dia depois da poda (0 a 108). O Kc começa em 0,49, sobe até ~0,74 e cai no fim do ciclo. Multiplicando por ET₀, temos quanto a uva consome: **ETc = Kc × ET₀**.
@@ -49,7 +53,7 @@ A equação de Ávila Netto: `Kc = −0,00008·DAP² + 0,0089·DAP + 0,488`. DAP
 ### 1.4 `carregar_clima()`
 Lê o CSV de Petrolina e preenche os 2 dias que faltam (08/10/2000 e 14/10/2001) pela média entre o dia anterior e o seguinte. A coluna `interpolado` marca esses dias.
 
-### 1.5 `politica_aleatoria(rng)`: o produtor simulado
+### 1.5 `politica_aleatoria(rng, raw)`: o produtor simulado
 Sorteia um de dois tipos de produtor:
 - **Gatilho:** irriga quando a caixa passou de um certo nível de gasto (de 0,3 a 2,4 × RAW) e repõe uma parte do que faltava (30% a 110%).
 - **Turno fixo:** irriga a cada N dias (1 a 7) uma lâmina proporcional ao ETc.
@@ -64,24 +68,26 @@ Para cada dia do ciclo:
 3. Calcula o **Ks** (coeficiente de estresse): se `Dr ≤ RAW`, Ks = 1 (sem estresse). Se passou, Ks cai em linha reta até 0 quando o solo esvazia. A planta com sede fecha os estômatos e consome menos.
 4. Atualiza a caixa (equação 85 do FAO-56):
    `Dr_hoje = Dr_ontem − chuva − irrigação + Ks × ETc`
-5. Limita `Dr` entre 0 e 66. Água a mais drena para baixo e se perde.
+5. Limita `Dr` entre 0 e TAW. Água a mais drena para baixo e se perde.
 6. Rotula o dia:
-   - `Dr ≤ 23,1` → **0 = adequado**
-   - `23,1 < Dr ≤ 44,5` → **1 = déficit moderado**
-   - `Dr > 44,5` → **2 = déficit crítico**
+   - `Dr ≤ RAW` → **0 = adequado**
+   - `RAW < Dr ≤ Dr crítico` → **1 = déficit moderado**
+   - `Dr > Dr crítico` → **2 = déficit crítico**
 
-**Exemplo de um dia:** ontem Dr = 20 mm. Hoje ETo = 6 mm, Kc = 0,7, então ETc = 4,2 mm. Não choveu e não irrigou. Como 20 ≤ 23,1, Ks = 1. Dr = 20 − 0 − 0 + 4,2 = **24,2 mm** → passou de 23,1, então hoje é "déficit moderado".
+Cada linha guarda também o `TAW` do ciclo, que vira uma feature.
+
+**Exemplo de um dia (solo de 66 mm):** ontem Dr = 20 mm. Hoje ETo = 6 mm, Kc = 0,7, então ETc = 4,2 mm. Não choveu e não irrigou. Como 20 ≤ 23,1, Ks = 1. Dr = 20 − 0 − 0 + 4,2 = **24,2 mm** → passou de 23,1, então hoje é "déficit moderado".
 
 ### 1.7 `adicionar_janelas(df)`: a memória dos últimos dias
 A planta não sabe só do dia de hoje: o estado do solo é a soma do passado. Então, para cada dia, somamos ETc, chuva e irrigação dos últimos **3, 7 e 14 dias**, e o **saldo** (`chuva + irrigação − ETc`) de 7 e 14 dias. São essas somas que o firmware vai precisar guardar.
 
 ### 1.8 `main()`
-Roda 10 anos × 2 podas × 8 produtores = **160 ciclos**, cerca de 17.440 dias. Separa por ano:
+Para cada ano, sorteia 48 ciclos. Cada ciclo tem a sua data de poda (qualquer dia do ano, porque no Vale não há inverno e cada produtor poda quando quer), o seu solo, a sua raiz e o seu produtor. Ciclos que passariam do fim de 2009 ficam de fora. São **467 ciclos**, cerca de 50.900 dias. Separa pelo ano da poda:
 - **treino:** 2000 a 2006 (o modelo aprende aqui)
 - **validação:** 2007 e 2008 (escolhemos a configuração aqui)
 - **teste:** 2009 (nota final, ano que o modelo nunca viu)
 
-Separar por ano, e não sorteando dias, evita "cola": dias vizinhos são muito parecidos, e se caíssem em grupos diferentes a nota sairia falsamente alta.
+Separar por ano, e não sorteando dias, evita "cola": dias vizinhos são muito parecidos, e se caíssem em grupos diferentes a nota sairia falsamente alta. Usar o ano da **poda** garante que um ciclo que vira o ano fica inteiro num grupo só.
 
 Saída: `dados/dataset_uva.csv`.
 
@@ -89,8 +95,8 @@ Saída: `dados/dataset_uva.csv`.
 
 ## 2. `02_comparar_modelos.py`: qual algoritmo usar
 
-### 2.1 As 23 features (entradas)
-`FEATURES` é a lista do que o modelo recebe: dia do ciclo (`dap`), `kc`, `ETo`, `ETc`, chuva e irrigação do dia, Tmax, Tmin, UR, vento, radiação, `dias_sem_irrigar` e as somas de 3/7/14 dias. **Note que `Dr` não está na lista**: o modelo tem que adivinhar o estado do solo só com o que o sensor e o histórico mostram.
+### 2.1 As 24 features (entradas)
+`FEATURES` é a lista do que o modelo recebe: o `TAW` do solo, dia do ciclo (`dap`), `kc`, `ETo`, `ETc`, chuva e irrigação do dia, Tmax, Tmin, UR, vento, radiação, `dias_sem_irrigar` e as somas de 3/7/14 dias. **Note que `Dr` não está na lista**: o modelo tem que adivinhar o estado do solo só com o que o sensor e o histórico mostram.
 
 ### 2.2 Normalização
 `StandardScaler` transforma cada feature em `(x − média) / desvio`. Assim, chuva em mm e UR em % ficam na mesma escala, e a rede aprende melhor. A média e o desvio são calculados **só no treino**, porque o modelo não pode "espiar" os dados de teste.
@@ -111,7 +117,9 @@ Cada um é treinado no treino e avaliado na validação pelo **F1 macro**, a mé
   - SVM: precisa guardar milhares de "vetores de suporte" (dias de treino) inteiros.
   - RF: cada nó de cada árvore ocupa ~10 bytes.
 
-Resultado: os três acertam ~91%, mas o SVM ocupa 343 KB e a RF 1 MB. A MLP ocupa 1,7 KB. Por isso a escolha é a MLP.
+Resultado: os três ficam entre 84% e 86% (MLP 85,8%, RF 85,3%, SVM 83,8%), mas o SVM ocupa 1,2 MB e a RF 3,5 MB. A MLP ocupa 5 KB. Por isso a escolha é a MLP.
+
+A acurácia é menor que os ~91% da primeira versão porque agora a poda cai em qualquer época do ano e o solo muda. O problema ficou mais difícil e mais parecido com o campo.
 
 ---
 
@@ -119,14 +127,16 @@ Resultado: os três acertam ~91%, mas o SVM ocupa 343 KB e a RF 1 MB. A MLP ocup
 
 ### 3.1 A rede
 ```
-23 entradas → 16 neurônios (ReLU) → 3 saídas (softmax)
+24 entradas → 16 neurônios (ReLU) → 3 saídas (softmax)
 ```
 - Cada neurônio faz `soma(peso × entrada) + bias` e passa pela **ReLU** (`max(0, x)`).
 - O **softmax** transforma as 3 saídas em probabilidades que somam 1. A classe escolhida é a de maior valor.
-- Total: 23×16 + 16 + 16×3 + 3 = **435 parâmetros**.
+- Total: 24×16 + 16 + 16×3 + 3 = **451 parâmetros**.
+
+A comparação do script 02 escolheu duas camadas (32 e 16), mas a de 16 sozinha fica a 1 ponto dela com um terço do tamanho, então usamos a menor.
 
 ### 3.2 O treino
-- `class_weight`: erros nas classes raras (crítico é só 13%) pesam mais, para o modelo não as ignorar.
+- `class_weight`: erros nas classes raras (crítico é cerca de 13%) pesam mais, para o modelo não as ignorar.
 - `EarlyStopping`: para quando a validação para de melhorar por 15 épocas e volta para a melhor versão. Evita decorar o treino (overfitting).
 
 ### 3.3 Exportação para MicroPython
@@ -135,12 +145,12 @@ Depois do treino, o script tira de dentro do Keras os números da rede (`get_wei
 - `W1` e `B1`, os pesos e bias da camada escondida;
 - `W2` e `B2`, os da camada de saída.
 
-Todos ficam guardados como `array("f", [...])`, vetores de floats de 32 bits, que ocupam 4 bytes por número (cerca de 1,9 KB no total).
+Todos ficam guardados como `array("f", [...])`, vetores de floats de 32 bits, que ocupam 4 bytes por número (cerca de 2 KB no total).
 
 **Por que não precisamos de TensorFlow Lite nem de INT8:** a rede é tão pequena que dá para escrever a conta dela à mão em poucas linhas de Python (próxima seção). A conta tem cerca de 420 multiplicações e roda uma vez por dia; mesmo sem FPU, isso é rápido.
 
 ### 3.4 A conferência
-O script importa o `classificador.py` de verdade, roda os 1.744 dias de 2009 por ele e compara com o Keras: **as duas respostas são iguais em 100% dos dias, com 90,7% de acurácia**. Também rodei num MicroPython compilado com float de 32 bits, como o do RP2040, e o resultado foi o mesmo.
+O script importa o `classificador.py` de verdade, roda os 3.815 dias de 2009 por ele e compara com o Keras: **as duas respostas são iguais em 100% dos dias, com 84,6% de acurácia e 88,5% dos dias críticos detectados**. Também rodei num MicroPython compilado com float de 32 bits, como o do RP2040, e o resultado foi o mesmo.
 
 ---
 
@@ -151,21 +161,31 @@ Só dados: `N_FEATURES`, `N_OCULTA`, `N_CLASSES`, os nomes das features (`FEATUR
 
 ### 4.2 `classificador.py` (escrito à mão)
 Tem uma função, `classificar(x)`, que faz quatro passos:
-1. **Normaliza:** `z = (x − média) / desvio` para cada uma das 23 entradas.
+1. **Normaliza:** `z = (x − média) / desvio` para cada uma das 24 entradas.
 2. **Camada escondida:** para cada um dos 16 neurônios, soma `z[i] × W1` + bias e aplica a ReLU.
 3. **Camada de saída:** para cada uma das 3 classes, soma `h[j] × W2` + bias.
 4. **Escolhe:** devolve o índice da maior saída (0 = adequado, 1 = moderado, 2 = crítico) e as 3 saídas.
 
 O softmax não é calculado na placa, porque ele não muda qual saída é a maior. Isso economiza 3 exponenciais por dia.
 
-### 4.3 `teste_classificador.py`
-Roda 6 dias reais de 2009 (2 de cada classe) e mostra a classe prevista, a esperada, o tempo de cada inferência e a memória livre. Serve para confirmar na placa que tudo foi copiado certo e para medir o tempo real.
+### 4.3 `config_local.py` (editar na instalação)
+É o único arquivo que muda de um local para outro:
+- `AGUA_DISP`: quanta água o solo segura (0,06 a 0,09 arenoso, 0,11 franco-arenoso, 0,15 a 0,18 argiloso/Vertissolo).
+- `RAIZ_M`: profundidade das raízes, de 0,4 a 0,8 m.
+- `DATA_PODA`: data da última poda, para contar o DAP. Atualize a cada poda.
 
-### 4.4 Como usar no firmware (uma vez por dia)
+E três funções que o firmware usa para montar a entrada: `taw()` (1000 × água × raiz), `dap(hoje)` (dias desde a poda) e `kc(dap)` (equação de Ávila Netto).
+
+### 4.4 `teste_classificador.py`
+Roda 6 dias de 2009 (2 de cada classe, em solos de 35 a 111 mm) e mostra a classe prevista, a esperada, o tempo de cada inferência e a memória livre. Serve para confirmar na placa que tudo foi copiado certo e para medir o tempo real.
+
+### 4.5 Como usar no firmware (uma vez por dia)
 ```python
 import classificador
+import config_local as cfg
 
-x = montar_features()        # você escreve: sensores + histórico de 14 dias, na ordem de classificador.FEATURES
+d = cfg.dap(hoje)            # hoje = (ano, mês, dia), do RTC
+x = [cfg.taw(), d, cfg.kc(d)] + montar_resto()   # você escreve: sensores + histórico de 14 dias, na ordem de classificador.FEATURES
 classe, saidas = classificador.classificar(x)
 print(classificador.CLASSES[classe])
 ```
@@ -174,13 +194,16 @@ print(classificador.CLASSES[classe])
 
 ## 5. Como mudar algo e refazer
 
-1. Ajuste um parâmetro no topo do `01_gerar_dataset.py`, por exemplo as datas de poda que o Prof. Max indicar.
+**Instalar em outro local:** não precisa retreinar. Edite só o `config_local.py` da placa com o solo, a raiz e a data da poda daquela área.
+
+**Mudar a simulação** (por exemplo, o `P_DEPLECAO` que o Prof. Max indicar, ou uma faixa de solo diferente):
+1. Ajuste o parâmetro no topo do `01_gerar_dataset.py`.
 2. Rode, na pasta `modelo/`:
    ```
    python 01_gerar_dataset.py
    python 02_comparar_modelos.py
    python 03_treinar_mlp.py
    ```
-3. O `agroedge_pesos.py` é gerado de novo. Copie ele para a placa: o `classificador.py` não muda.
+3. O `agroedge_pesos.py` é gerado de novo. Copie ele para a placa: o `classificador.py` e o `config_local.py` não mudam.
 
 Dependências (só no PC, não na placa): `pip install pandas scikit-learn tabulate tensorflow`.

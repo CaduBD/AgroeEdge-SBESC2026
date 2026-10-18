@@ -1,6 +1,6 @@
 # Código explicado, função por função
 
-Este arquivo percorre os três scripts do PC e os três arquivos MicroPython da placa, na ordem em que o código aparece. Para cada trecho: o código, o que ele faz e por quê. O `GUIA.md` dá a visão geral; aqui é o detalhe.
+Este arquivo percorre os três scripts do PC e os quatro arquivos MicroPython da placa, na ordem em que o código aparece. Para cada trecho: o código, o que ele faz e por quê. O `GUIA.md` dá a visão geral; aqui é o detalhe.
 
 Bibliotecas que aparecem:
 - **numpy (`np`)**: contas com vetores e números aleatórios.
@@ -25,27 +25,34 @@ CSV_CLIMA = os.path.join(AQUI, "dados", "petrolina_clima_2000_2009.csv")
 - `os.path.join` monta o caminho com a barra certa do sistema (`\` no Windows, `/` no Linux).
 - Por que isso: o script funciona de qualquer pasta de onde você o rode, porque procura os dados ao lado dele, e não na pasta atual do terminal.
 
-## 1.2 Parâmetros e constantes derivadas
+## 1.2 Parâmetros
 ```python
-PODAS = [(1, 15), (7, 15)]
 CICLO_DIAS = 109
-ZR_M = 0.6
-AGUA_DISP_M3M3 = 0.11
+CICLOS_POR_ANO = 48
+AGUA_DISP_FAIXA = (0.06, 0.18)
+ZR_FAIXA = (0.4, 0.8)
 P_DEPLECAO = 0.35
 KS_CRITICO = 0.5
-CENARIOS_POR_CICLO = 8
 SEMENTE = 42
-
-TAW = 1000 * AGUA_DISP_M3M3 * ZR_M
-RAW = P_DEPLECAO * TAW
-DR_CRITICO = TAW - KS_CRITICO * (1 - P_DEPLECAO) * TAW
 CLASSES = {0: "adequado", 1: "deficit_moderado", 2: "deficit_critico"}
 ```
 - Nomes em MAIÚSCULAS são, por convenção do Python, constantes: valores que não mudam durante a execução. Ficam no topo para serem fáceis de achar e trocar.
-- `PODAS` é uma lista de tuplas `(mês, dia)`.
-- `TAW` multiplica por 1000 para converter metros de água em milímetros: 0,11 m³ de água por m³ de solo × 0,6 m de raiz = 0,066 m = **66 mm**.
-- `DR_CRITICO` sai de isolar `Dr` na fórmula do Ks do FAO-56 (seção 1.6) com `Ks = 0,5`: dá **44,55 mm**.
+- `AGUA_DISP_FAIXA` e `ZR_FAIXA` são **faixas** `(mínimo, máximo)`, e não um valor só. Cada ciclo sorteia um solo e uma raiz dentro delas, para o modelo aprender a lidar com qualquer solo do Vale.
+- `P_DEPLECAO` e `KS_CRITICO` continuam fixos: o primeiro é da cultura (uva), não do local; o segundo é a nossa definição de "crítico".
 - `CLASSES` é um dicionário que traduz o número da classe para texto, só para os `print`.
+
+## 1.2.1 `solo(agua_disp, zr)`
+```python
+def solo(agua_disp, zr):
+    taw = 1000 * agua_disp * zr
+    raw = P_DEPLECAO * taw
+    dr_critico = taw - KS_CRITICO * (1 - P_DEPLECAO) * taw
+    return taw, raw, dr_critico
+```
+- Antes, TAW, RAW e DR_CRITICO eram constantes calculadas uma vez. Agora cada ciclo tem o seu solo, então viraram uma função.
+- `taw` multiplica por 1000 para converter metros de água em milímetros. Ex.: 0,11 m³ de água por m³ de solo × 0,6 m de raiz = 0,066 m = **66 mm**.
+- `dr_critico` sai de isolar `Dr` na fórmula do Ks do FAO-56 (seção 1.6) com `Ks = 0,5`. Com TAW = 66 dá **44,55 mm**.
+- `return a, b, c` devolve uma **tupla** com os três. Quem chama desempacota: `taw, raw, dr_critico = solo(0.11, 0.6)`.
 
 ## 1.3 `kc_uva(dap)`
 ```python
@@ -77,13 +84,13 @@ Linha por linha:
 4. `df.reindex(completo)` cria linhas para esses dias, com valores vazios (`NaN`). `.interpolate()` preenche cada vazio com uma reta entre o dia anterior e o seguinte.
 5. `df.index.isin(faltando)` devolve `True/False` para cada dia; `.astype(int)` converte para 1/0. É a coluna que marca os dias inventados.
 
-## 1.5 `politica_aleatoria(rng)`
+## 1.5 `politica_aleatoria(rng, raw)`
 ```python
-def politica_aleatoria(rng):
+def politica_aleatoria(rng, raw):
     tipo = rng.choice(["gatilho", "turno_fixo"])
     if tipo == "gatilho":
         return dict(tipo=tipo,
-                    gatilho=rng.uniform(0.3, 2.4) * RAW,
+                    gatilho=rng.uniform(0.3, 2.4) * raw,
                     fracao=rng.uniform(0.3, 1.1),
                     falha=rng.uniform(0.0, 0.5))
     return dict(tipo=tipo,
@@ -92,20 +99,23 @@ def politica_aleatoria(rng):
                 falha=rng.uniform(0.0, 0.5))
 ```
 - `rng` é o gerador de números aleatórios criado no `main()`. Passá-lo como parâmetro, em vez de usar um global, deixa claro de onde vem a aleatoriedade.
+- `raw` é o do solo daquele ciclo: o gatilho do produtor é proporcional ao tamanho do "tanque".
 - `rng.choice([...])` sorteia um item da lista.
 - `rng.uniform(a, b)` sorteia um número real entre a e b. `rng.integers(1, 8)` sorteia um inteiro de 1 a **7** (o 8 não entra).
 - `dict(chave=valor, ...)` cria um dicionário. A função devolve as "regras" do produtor, por exemplo `{"tipo": "gatilho", "gatilho": 31.2, "fracao": 0.8, "falha": 0.1}`.
 - Se o `if` for verdadeiro, o primeiro `return` encerra a função; senão, cai no segundo `return`. Por isso não precisa de `else`.
 
-## 1.6 `simular_ciclo(clima, inicio, pol, rng, cenario_id)`
-É a função mais importante. Ela simula um ciclo de 109 dias para um produtor.
+## 1.6 `simular_ciclo(clima, inicio, agua_disp, zr, pol, rng, cenario_id)`
+É a função mais importante. Ela simula um ciclo de 109 dias para um produtor, num solo.
 
 ```python
+    taw, raw, dr_critico = solo(agua_disp, zr)
     dias = clima.loc[inicio: inicio + pd.Timedelta(days=CICLO_DIAS - 1)]
     dr = 0.0
     ultimo = 0
     linhas = []
 ```
+- A primeira linha calcula o tanque deste solo (seção 1.2.1).
 - `clima.loc[a:b]` recorta as linhas entre duas datas, **incluindo** as duas pontas. `pd.Timedelta(days=108)` é "108 dias depois", então são 109 dias.
 - `dr = 0.0`: o ciclo começa com o solo cheio (supõe-se uma irrigação antes da poda).
 - `ultimo` guarda o último dia em que houve irrigação.
@@ -134,32 +144,33 @@ def politica_aleatoria(rng):
 - A decisão usa o `dr` de **ontem**, porque o produtor decide de manhã.
 
 ```python
-        ks = 1.0 if dr <= RAW else max(0.0, (TAW - dr) / ((1 - P_DEPLECAO) * TAW))
+        ks = 1.0 if dr <= raw else max(0.0, (taw - dr) / ((1 - P_DEPLECAO) * taw))
         etc_aj = ks * etc
         dr = dr - c.Precipitacao - irr + etc_aj
-        dr = min(max(dr, 0.0), TAW)
+        dr = min(max(dr, 0.0), taw)
 ```
 - `x if condição else y` é um `if` em uma linha.
-- A fórmula do Ks é a equação 84 do FAO-56. Com `dr = RAW` dá 1; com `dr = TAW` dá 0; no meio cai em linha reta. O `max(0.0, ...)` evita número negativo.
+- A fórmula do Ks é a equação 84 do FAO-56. Com `dr = raw` dá 1; com `dr = taw` dá 0; no meio cai em linha reta. O `max(0.0, ...)` evita número negativo.
 - `etc_aj` é o consumo real: a planta com sede consome menos que o ETc.
 - A atualização do `dr` é a equação 85: gasto aumenta `dr`, chuva e irrigação diminuem.
-- `min(max(dr, 0), TAW)` "prende" o valor entre 0 e 66. Abaixo de 0 seria solo mais que cheio (o excesso drena); acima de 66 seria solo mais seco que o ponto de murcha.
+- `min(max(dr, 0), taw)` "prende" o valor entre 0 e o TAW. Abaixo de 0 seria solo mais que cheio (o excesso drena); acima do TAW seria solo mais seco que o ponto de murcha.
 
 ```python
         if irr > 0:
             ultimo = dap
-        if dr <= RAW:
+        if dr <= raw:
             classe = 0
-        elif dr <= DR_CRITICO:
+        elif dr <= dr_critico:
             classe = 1
         else:
             classe = 2
-        linhas.append(dict(data=data, cenario=cenario_id, dap=dap, kc=kc, ...,
+        linhas.append(dict(data=data, cenario=cenario_id, TAW=taw, dap=dap, kc=kc, ...,
                            dias_sem_irrigar=dap - ultimo, ..., Dr=dr, classe=classe))
     return linhas
 ```
 - O rótulo é decidido com o `dr` do **fim do dia**.
 - `linhas.append(...)` adiciona um dicionário com tudo do dia. Cada chave vira uma coluna depois.
+- `TAW=taw` grava o tamanho do tanque em todos os dias do ciclo. É a feature que diz à rede em que solo ela está.
 - `dias_sem_irrigar = dap - ultimo`. Detalhe: se o produtor nunca irrigou, conta desde a poda.
 - `Dr` é salvo para conferência, mas **não** entra como feature (ver Parte 2).
 
@@ -188,28 +199,32 @@ def main():
     linhas = []
     cid = 0
     for ano in sorted(set(clima.index.year)):
-        for mes, dia in PODAS:
-            inicio = pd.Timestamp(ano, mes, dia)
+        for _ in range(CICLOS_POR_ANO):
+            inicio = pd.Timestamp(ano, 1, 1) + pd.Timedelta(days=int(rng.integers(0, 365)))
             if inicio + pd.Timedelta(days=CICLO_DIAS - 1) > clima.index.max():
                 continue
-            for _ in range(CENARIOS_POR_CICLO):
-                linhas += simular_ciclo(clima, inicio, politica_aleatoria(rng), rng, cid)
-                cid += 1
+            agua_disp, zr = rng.uniform(*AGUA_DISP_FAIXA), rng.uniform(*ZR_FAIXA)
+            pol = politica_aleatoria(rng, solo(agua_disp, zr)[1])
+            linhas += simular_ciclo(clima, inicio, agua_disp, zr, pol, rng, cid)
+            cid += 1
 ```
 - `np.random.default_rng(42)` cria o gerador com semente fixa: rodando de novo, sai exatamente o mesmo dataset.
 - `set(clima.index.year)` pega os anos sem repetir; `sorted` põe em ordem.
-- `continue` pula para a próxima volta do laço. Aqui ele pularia um ciclo que terminasse depois do fim dos dados (não acontece com 15/07, mas protege se alguém mudar a data).
-- `for _ in range(8)`: o `_` é um nome de variável que significa "não vou usar o contador".
-- `linhas += lista` junta as listas. `cid` numera cada cenário de 0 a 159.
+- `for _ in range(48)`: o `_` é um nome de variável que significa "não vou usar o contador".
+- A data da poda é 1º de janeiro + um número sorteado de 0 a 364 dias. No Vale não há inverno, então cada produtor poda em qualquer época.
+- `continue` pula para a próxima volta do laço: descarta os ciclos que terminariam depois do fim de 2009.
+- `rng.uniform(*AGUA_DISP_FAIXA)`: o `*` "abre" a tupla `(0.06, 0.18)` em dois argumentos, como se fosse `rng.uniform(0.06, 0.18)`.
+- `solo(...)[1]` pega só o segundo valor devolvido, o `raw`, que o produtor usa para o gatilho.
+- `linhas += lista` junta as listas. `cid` numera cada ciclo; no fim são 467.
 
 ```python
     df = adicionar_janelas(pd.DataFrame(linhas))
-    df["ano"] = df["data"].dt.year
+    df["ano"] = df.groupby("cenario")["data"].transform("min").dt.year
     df["split"] = np.where(df.ano <= 2006, "treino", np.where(df.ano <= 2008, "validacao", "teste"))
     df.to_csv(os.path.join(AQUI, "dados", "dataset_uva.csv"), index=False, float_format="%.4f")
 ```
 - `pd.DataFrame(linhas)` transforma a lista de dicionários em tabela.
-- `.dt.year` extrai o ano de cada data.
+- `groupby("cenario")["data"].transform("min")` dá, para cada dia, a primeira data do seu ciclo, que é a data da poda. `.dt.year` extrai o ano. Assim um ciclo podado em novembro de 2006 fica todo no treino, mesmo com dias em 2007.
 - `np.where(condição, se_sim, se_não)` é um `if` aplicado na coluna inteira de uma vez. Aninhado, dá três valores.
 - `to_csv(..., index=False)` salva sem a coluna de índice; `float_format="%.4f"` grava 4 casas decimais, o que deixa o arquivo menor.
 
@@ -240,11 +255,11 @@ No scikit-learn, todo modelo tem a mesma "cara": `modelo.fit(X, y)` treina e `mo
 
 ## 2.2 `FEATURES` e `NOMES`
 ```python
-FEATURES = ["dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
+FEATURES = ["TAW", "dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
             "vento", "radiacao", "dias_sem_irrigar",
             "ETc_3d", ..., "saldo_14d"]
 ```
-A lista define **quais colunas** entram no modelo e **em que ordem**. O firmware precisa montar o vetor exatamente nessa ordem. `Dr`, `classe`, `data`, `cenario`, `split` e `interpolado` ficam de fora: são resposta ou controle, não entrada.
+A lista define **quais colunas** entram no modelo e **em que ordem**. A primeira é o `TAW`, que diz à rede o tamanho do "tanque" do solo; é ela que permite usar o mesmo modelo em qualquer local. O firmware precisa montar o vetor exatamente nessa ordem. `Dr`, `classe`, `data`, `cenario`, `split` e `interpolado` ficam de fora: são resposta ou controle, não entrada.
 
 ## 2.3 Funções de memória
 ```python
@@ -259,7 +274,7 @@ def memoria_mlp(m):
 def memoria_svm(m):
     return (m.support_vectors_.size + m.dual_coef_.size + m.intercept_.size) * 4
 ```
-- O SVM com kernel RBF precisa guardar os **vetores de suporte**: dias de treino inteiros (23 números cada) que definem a fronteira entre as classes. Com 3.512 vetores, são 3.512 × 23 × 4 bytes, e é por isso que ele fica grande.
+- O SVM com kernel RBF precisa guardar os **vetores de suporte**: dias de treino inteiros (24 números cada) que definem a fronteira entre as classes. Com 12.072 vetores, são 12.072 × 24 × 4 bytes, mais de 1 MB, e é por isso que ele fica grande.
 
 ```python
 def memoria_rf(m):
@@ -384,7 +399,7 @@ def lista_f(v):
     return f'array("f", [{nums}])'
 ```
 - `np.asarray(v, dtype=np.float32)` garante que os números estão em float de 32 bits, o mesmo tamanho do float do MicroPython no RP2040.
-- `.ravel()` "achata" uma matriz em uma fila só. A matriz `W1` (23 × 16) vira um vetor de 368 números, linha atrás de linha.
+- `.ravel()` "achata" uma matriz em uma fila só. A matriz `W1` (24 × 16) vira um vetor de 384 números, linha atrás de linha.
 - `f"{x:.8g}"` escreve o número com até 8 algarismos significativos. Um float32 guarda cerca de 7, então 8 garante que nada se perde ao virar texto. O `g` escolhe sozinho entre `0.00123` e `1.23e-05`, o mais curto.
 - O resultado é um texto como `array("f", [0.12, -0.5, ...])`, que é código Python válido. Quando a placa importar o arquivo, isso cria o vetor.
 
@@ -418,7 +433,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
 ```
 - Aqui a normalização é feita "à mão", e não com `StandardScaler`, porque precisamos dos números `media` e `desvio` para escrever no arquivo da placa.
 - `ddof=0` usa o desvio populacional (divide por N), o mesmo do `StandardScaler`. O padrão do pandas é dividir por N−1.
-- `media` tem 23 valores. O numpy subtrai cada um da coluna certa automaticamente (isso se chama *broadcasting*).
+- `media` tem 24 valores. O numpy subtrai cada um da coluna certa automaticamente (isso se chama *broadcasting*).
 
 ## 3.5 Pesos das classes
 ```python
@@ -442,8 +457,8 @@ def exportar(media, desvio, W1, B1, W2, B2):
     p_keras = modelo.predict(Xte, verbose=0).argmax(1)
 ```
 - `Sequential` é uma rede em que os dados passam por uma camada depois da outra.
-- `Input(shape=(23,))` diz que cada exemplo tem 23 números.
-- `Dense(16, activation="relu")`: cada um dos 16 neurônios calcula `relu(w · x + b)`. Isso dá 23 × 16 pesos + 16 bias.
+- `Input(shape=(24,))` diz que cada exemplo tem 24 números.
+- `Dense(16, activation="relu")`: cada um dos 16 neurônios calcula `relu(w · x + b)`. Isso dá 24 × 16 pesos + 16 bias.
 - `Dense(3, activation="softmax")`: 3 saídas transformadas em probabilidades.
 - `compile` configura o treino:
   - **Adam** é o algoritmo que ajusta os pesos, com passo (taxa de aprendizado) de 0,001.
@@ -460,7 +475,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
     caminho = exportar(media, desvio, W1, B1, W2, B2)
 ```
 - `modelo.layers` são as duas camadas `Dense`. `get_weights()` devolve `[pesos, bias]` de cada uma.
-- `W1` tem formato (23, 16): `W1[i][j]` liga a entrada `i` ao neurônio `j`. `W2` tem formato (16, 3).
+- `W1` tem formato (24, 16): `W1[i][j]` liga a entrada `i` ao neurônio `j`. `W2` tem formato (16, 3).
 - A linha desempacota os dois pares de uma vez: `(W1, B1)` da primeira camada, `(W2, B2)` da segunda.
 
 ## 3.8 Conferir com o próprio `classificador.py`
@@ -484,7 +499,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
         f.write(f"\nConcordância Keras × classificador.py: {(p_keras == p_mcu).mean():.4f}.\n")
 ```
 - `p_keras == p_mcu` compara os dois vetores posição a posição e dá `True/False`. `.mean()` de `True/False` é a fração de `True`: 1,0000 quer dizer 100% iguais.
-- `n_param` dá 435. Somando as 46 médias e desvios e multiplicando por 4 bytes, dá o tamanho dos vetores na placa (1.924 bytes).
+- `n_param` dá 451. Somando as 48 médias e desvios e multiplicando por 4 bytes, dá o tamanho dos vetores na placa (1.996 bytes).
 
 ---
 
@@ -495,7 +510,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
 # Gerado por modelo/03_treinar_mlp.py - não editar à mão
 from array import array
 
-N_FEATURES = 23
+N_FEATURES = 24
 N_OCULTA = 16
 N_CLASSES = 3
 
@@ -510,8 +525,8 @@ W2 = array("f", [...])   # 48
 B2 = array("f", [...])   # 3
 ```
 - É um módulo só de dados: nenhuma função, só constantes.
-- **Por que `array("f")` e não lista comum:** no MicroPython, cada float de uma lista é um objeto separado na memória, com um gasto extra por número. O `array("f")` guarda os números colados, 4 bytes cada, como um vetor em C. Para 481 números, são cerca de 1,9 KB.
-- **Matriz achatada:** o MicroPython não tem matriz de duas dimensões, então `W1` é guardado como uma fila de 23 × 16 = 368 números, linha após linha. O peso que liga a entrada `i` ao neurônio `j` fica na posição `i * 16 + j`. Exemplo: entrada 2, neurônio 5 → posição 2 × 16 + 5 = 37.
+- **Por que `array("f")` e não lista comum:** no MicroPython, cada float de uma lista é um objeto separado na memória, com um gasto extra por número. O `array("f")` guarda os números colados, 4 bytes cada, como um vetor em C. Para 499 números, são cerca de 2 KB.
+- **Matriz achatada:** o MicroPython não tem matriz de duas dimensões, então `W1` é guardado como uma fila de 24 × 16 = 384 números, linha após linha. O peso que liga a entrada `i` ao neurônio `j` fica na posição `i * 16 + j`. Exemplo: entrada 2, neurônio 5 → posição 2 × 16 + 5 = 37.
 - `MEDIA[0] = 54` é a média do `dap` (dias 0 a 108 → média 54), e assim por diante na ordem de `FEATURES`.
 
 ## 4.2 `classificador.py` (escrito à mão)
@@ -529,13 +544,13 @@ def classificar(x):
     if len(x) != P.N_FEATURES:
         raise ValueError("esperava %d features" % P.N_FEATURES)
 ```
-- Confere se chegaram 23 números. Se não, `raise` interrompe com uma mensagem de erro clara, em vez de dar um resultado errado sem avisar.
+- Confere se chegaram 24 números. Se não, `raise` interrompe com uma mensagem de erro clara, em vez de dar um resultado errado sem avisar.
 - `"%d" % valor` é a formatação de texto antiga do Python, que o MicroPython também aceita.
 
 ```python
     z = [(x[i] - P.MEDIA[i]) / P.DESVIO[i] for i in range(P.N_FEATURES)]
 ```
-- **Passo 1, normalização:** a mesma conta do `norm` do script 03, feita para cada uma das 23 entradas com uma list comprehension.
+- **Passo 1, normalização:** a mesma conta do `norm` do script 03, feita para cada uma das 24 entradas com uma list comprehension.
 
 ```python
     h = []
@@ -547,10 +562,10 @@ def classificar(x):
 ```
 - **Passo 2, camada escondida.** Para cada neurônio `j` (16 voltas):
   - começa a soma `s` pelo bias do neurônio;
-  - soma `entrada × peso` para as 23 entradas (é o produto escalar `z · W1[:, j]`);
+  - soma `entrada × peso` para as 24 entradas (é o produto escalar `z · W1[:, j]`);
   - aplica a **ReLU**: se a soma deu negativa, vira 0.
 - `h` termina com 16 valores, as "ativações" da camada escondida.
-- São 16 × 23 = 368 multiplicações. É exatamente o que o `Dense(16, activation="relu")` do Keras calcula.
+- São 16 × 24 = 384 multiplicações. É exatamente o que o `Dense(16, activation="relu")` do Keras calcula.
 
 ```python
     saidas = []
@@ -569,14 +584,41 @@ def classificar(x):
 - **Por que não calcular o softmax:** o softmax é `e^s / soma(e^s)`. Como a exponencial só cresce, a maior saída antes do softmax continua sendo a maior depois. Pular essa parte economiza 3 exponenciais, que são caras sem FPU.
 - `return melhor, saidas` devolve uma tupla. Quem chama pode fazer `classe, saidas = classificar(x)`. As `saidas` servem para mandar ao dashboard, por exemplo para mostrar o quanto o modelo está "seguro".
 
-## 4.3 `teste_classificador.py`
+## 4.3 `config_local.py` (editar na instalação)
+```python
+import time
+
+AGUA_DISP = 0.11
+RAIZ_M = 0.6
+DATA_PODA = (2026, 1, 15)
+
+def taw():
+    return 1000 * AGUA_DISP * RAIZ_M
+
+def dap(hoje):
+    a = time.mktime(DATA_PODA + (0, 0, 0, 0, 0))
+    b = time.mktime(tuple(hoje) + (0, 0, 0, 0, 0))
+    return (b - a) // 86400
+
+def kc(d):
+    return -8e-5 * d * d + 0.0089 * d + 0.488
+```
+- É o único arquivo que muda de um local para outro. Os pesos são os mesmos em qualquer lugar; o que diz à rede em que solo ela está é o `taw()`.
+- `AGUA_DISP` e `RAIZ_M` são os mesmos parâmetros que o script 01 sorteia, só que agora com o valor real da área. O modelo foi treinado com TAW de 25 a 140 mm; fora disso, a resposta não é confiável.
+- `taw()` é a mesma conta da função `solo()` do script 01 (seção 1.2.1).
+- `dap(hoje)`: `time.mktime` converte uma data em segundos desde uma data fixa. No MicroPython ele recebe uma tupla de 8 números (ano, mês, dia, hora, minuto, segundo, dia da semana, dia do ano), por isso `+ (0, 0, 0, 0, 0)` completa a data com zeros. A diferença em segundos dividida por 86.400 (segundos de um dia) dá o DAP. O `//` é divisão inteira.
+- `kc(d)` é a mesma equação do `kc_uva` do script 01 (seção 1.3). `d * d` em vez de `d**2` é um pouco mais rápido no MicroPython.
+- Conferido no MicroPython: `taw()` = 66,0; `dap((2026, 3, 1))` = 45; `kc(45)` = 0,7265.
+
+## 4.4 `teste_classificador.py`
 ```python
 import gc
 import time
 import classificador
+import config_local
 
 DIAS = (
-    ((49, 0.732, 6.511, ...), 0),  # 2009-09-02
+    ((42.71, 55, 0.7355, ...), 0),  # 2009-08-13, TAW 43 mm
     ...
 )
 
@@ -591,21 +633,24 @@ for x, esperada in DIAS:
     print("%-17s esperado %-17s %6d us" % (classificador.CLASSES[classe],
                                           classificador.CLASSES[esperada], dt))
 print("acertos: %d de %d" % (acertos, len(DIAS)))
+print("TAW deste local (config_local.py): %.1f mm" % config_local.taw())
 ```
-- `DIAS` é uma tupla de pares `(features, classe_esperada)`: 6 dias reais de 2009, 2 de cada classe.
+- `DIAS` é uma tupla de pares `(features, classe_esperada)`: 6 dias de 2009, 2 de cada classe, em solos de 35 a 111 mm. O primeiro número de cada dia é o TAW.
 - `gc` é o coletor de lixo (*garbage collector*). `gc.collect()` libera a memória que não é mais usada, e `gc.mem_free()` mostra quanto sobrou. Isso é específico do MicroPython.
 - `time.ticks_us()` lê um relógio em microssegundos. `time.ticks_diff(fim, início)` faz a subtração do jeito certo mesmo quando o contador "dá a volta" (passa do valor máximo e recomeça do zero). São funções do MicroPython; no Python normal não existem.
 - `acertos += classe == esperada`: a comparação dá `True` (vale 1) ou `False` (vale 0), então soma 1 a cada acerto.
 - `"%-17s"` escreve o texto alinhado à esquerda em 17 colunas, para a tabela sair alinhada no terminal.
-- **Resultado conferido no PC**, num MicroPython compilado com float de 32 bits como o do RP2040: 6 de 6 acertos. O tempo mostrado no PC (~150 µs) não vale para a placa, que é bem mais lenta. Esse é o número que vocês devem medir na BitDogLab.
+- **Resultado conferido no PC**, num MicroPython compilado com float de 32 bits como o do RP2040: 6 de 6 acertos. O tempo mostrado no PC (~200 µs) não vale para a placa, que é bem mais lenta. Esse é o número que vocês devem medir na BitDogLab.
 
-## 4.4 Como usar no firmware
+## 4.5 Como usar no firmware
 ```python
 import classificador
+import config_local as cfg
 
-x = montar_features()   # vocês escrevem: sensores + histórico de 14 dias
+d = cfg.dap(hoje)       # hoje = (ano, mês, dia), lido do RTC
+x = [cfg.taw(), d, cfg.kc(d)] + montar_resto()   # vocês escrevem: sensores + histórico de 14 dias
 classe, saidas = classificador.classificar(x)
 print(classificador.CLASSES[classe])
 ```
-- `montar_features()` tem que devolver as 23 entradas **na ordem de `classificador.FEATURES`**, sem normalizar. Uma troca de ordem não dá erro: dá uma resposta errada sem aviso, então vale conferir com o `teste_classificador.py` sempre que mexer nisso.
-- Para copiar para a placa, use o Thonny ou o `mpremote cp classificador.py agroedge_pesos.py :` e rode o `teste_classificador.py` primeiro.
+- As três primeiras entradas vêm do `config_local.py`. `montar_resto()` devolve as outras 21. Juntas, têm que ser as 24 entradas **na ordem de `classificador.FEATURES`**, sem normalizar. Uma troca de ordem não dá erro: dá uma resposta errada sem aviso, então vale conferir com o `teste_classificador.py` sempre que mexer nisso.
+- Para copiar para a placa, use o Thonny ou o `mpremote cp classificador.py agroedge_pesos.py config_local.py :` e rode o `teste_classificador.py` primeiro.
