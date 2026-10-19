@@ -1,0 +1,15 @@
+# AgroEdge
+
+Sistema embarcado de irrigação de precisão para o Vale do São Francisco, na Competição de Sistemas Embarcados do SBESC 2026. A placa (BitDogLab, RP2040) calcula a evapotranspiração pelo FAO-56, classifica o estado hídrico da lavoura com uma rede neural pequena e indica a lâmina de irrigação, tudo localmente.
+
+## Pastas
+- [`modelo/`](modelo/README.md): dataset rotulado (uva Itália, Petrolina 2000–2009), comparação MLP × SVM × Random Forest, treino da MLP final e conferência do firmware no PC.
+- `firmware/modelo/`: o que vai para a placa, em MicroPython: classificador, histórico de 14 dias, lâmina de irrigação e configuração do local.
+
+## Documentação
+- [`modelo/README.md`](modelo/README.md): como rodar e o resumo dos resultados.
+- [`modelo/GUIA.md`](modelo/GUIA.md): explicação passo a passo.
+- [`modelo/CODIGO_EXPLICADO.md`](modelo/CODIGO_EXPLICADO.md): o código, função por função.
+- [`modelo/DECISOES.md`](modelo/DECISOES.md): por que o modelo é assim.
+
+Equipe: Carlos Eduardo Batista Diniz, Thalles Inácio Araújo e Raimundo Ferreira do Nascimento Júnior. Orientador: Prof. Max Santana Rolemberg Farias (UNIVASF).

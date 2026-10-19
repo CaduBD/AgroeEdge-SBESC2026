@@ -1,19 +1,32 @@
 # AgroEdge: dataset e classificador de estado hídrico (uva Itália)
 
+Por que o modelo é assim (MicroPython, TAW como entrada, poda em qualquer data): veja [DECISOES.md](DECISOES.md). Explicação passo a passo em [GUIA.md](GUIA.md) e linha por linha em [CODIGO_EXPLICADO.md](CODIGO_EXPLICADO.md).
+
 Rodar em ordem (Python 3, `pip install pandas scikit-learn tabulate tensorflow`):
 
 1. `python3 01_gerar_dataset.py` gera `dados/dataset_uva.csv` a partir de `dados/petrolina_clima_2000_2009.csv` (50.903 dias rotulados, 467 ciclos com solo, raiz e poda sorteados).
 2. `python3 02_comparar_modelos.py` treina MLP, SVM e Random Forest e gera `resultados_comparacao.md`.
 3. `python3 03_treinar_mlp.py` treina a MLP final no Keras, gera `../firmware/modelo/agroedge_pesos.py` e confere o `classificador.py` no teste (`resultados_mlp.md`).
+4. `python3 04_conferir_firmware.py` passa os dias de 2009 pelo caminho do firmware (`historico.py` → `classificador.py` → `lamina.py`), confere as entradas e simula a placa irrigando sozinha.
 
 ## Firmware (MicroPython)
 Em `../firmware/modelo/`, copie para a placa:
 - `agroedge_pesos.py`: pesos, bias, médias e desvios (gerado pelo script 03, não editar).
 - `classificador.py`: a inferência da MLP em Python puro; use `classificador.classificar(x)`.
-- `config_local.py`: **o único arquivo que muda por local**: água disponível do solo, profundidade da raiz e data da poda. Calcula `taw()`, `dap(hoje)` e `kc(dap)`.
+- `config_local.py`: **o único arquivo que muda por local**: água disponível do solo, profundidade da raiz, data da poda, eficiência, área e vazão por planta. Calcula `taw()`, `dap(hoje)` e `kc(dap)`.
+- `historico.py`: guarda os últimos 14 dias num JSON na flash e monta as 24 entradas do dia, com as mesmas contas do script 01.
+- `lamina.py`: a lâmina de irrigação pelo FAO-56 (seção abaixo).
 - `teste_classificador.py`: roda 6 dias de 2009 na placa e mostra classe, tempo e memória livre.
 
-O modelo é geral: o TAW do solo é uma das entradas, então os mesmos pesos servem para qualquer solo com TAW entre 25 e 140 mm, sem retreinar. Roda em float, sem TensorFlow Lite nem quantização: são 451 parâmetros (2 KB em `array('f')`). Conferido no MicroPython 1.30 para Linux compilado com float de 32 bits, como no RP2040: mesma classe que o Keras nos 3.815 dias de teste (84,6% de acurácia, 88,5% dos críticos detectados). O tempo na BitDogLab ainda precisa ser medido com o `teste_classificador.py`.
+O modelo é geral: o TAW do solo é uma das entradas, então os mesmos pesos servem para qualquer solo com TAW entre 25 e 140 mm, sem retreinar. Roda em float, sem TensorFlow Lite nem quantização: são 451 parâmetros (2 KB em `array('f')`). Conferido no MicroPython 1.30 para Linux compilado com float de 32 bits, como no RP2040: mesma classe que o Keras nos 3.815 dias de teste (84,6% de acurácia, 89,1% dos críticos detectados). O tempo na BitDogLab ainda precisa ser medido com o `teste_classificador.py`.
+
+## Lâmina de irrigação
+Como na proposta, a lâmina sai do FAO-56 e a classe sai do modelo. A classe decide **se** irriga e o balanço decide **quanto**:
+- `lamina.atualizar_deficit(...)`: o déficit do solo em mm, pela mesma conta do rótulo (eq. 84 e 85).
+- `lamina.recomendar(classe, deficit)`: adequado não irriga; moderado ou crítico repõe todo o déficit. Devolve a lâmina líquida e a bruta (líquida ÷ eficiência).
+- `lamina.tempo_min(bruta)`: minutos de válvula aberta, pela área e vazão do `config_local.py`.
+
+Com a placa irrigando sozinha nos 35 ciclos de 2009 (script 04), o solo ficou adequado em 95,8% dos dias e não teve nenhum dia crítico, contra 64% e 8,4% dos produtores simulados do dataset.
 
 ## Regra de rotulagem
 Balanço hídrico diário do solo do FAO-56 (cap. 8, eq. 84 e 85), sobre o clima real de Petrolina 2000–2009 (DataClimaBR):
@@ -46,3 +59,4 @@ Pelo ano da poda: treino 2000–2006, validação 2007–2008, teste 2009. Norma
 - O rótulo é sintético: a acurácia mostra que o modelo aprende o balanço do FAO-56, não que acerta o campo. A prova real é com tensiômetros (Sprint 5).
 - O clima vem de grade interpolada (BR-DWGD), não dos sensores do protótipo.
 - A memória do SVM e da RF é estimativa dos parâmetros em float32, sem o código de inferência.
+- Com o histórico completo, a placa calcula o mesmo Dr do rótulo pela fórmula, e limiares nesse Dr acertam 100% do rótulo sintético, contra 84,6% da rede. Ver [DECISOES.md](DECISOES.md), seção 10.

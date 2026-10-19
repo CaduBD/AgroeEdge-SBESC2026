@@ -1,6 +1,6 @@
 # Código explicado, função por função
 
-Este arquivo percorre os três scripts do PC e os quatro arquivos MicroPython da placa, na ordem em que o código aparece. Para cada trecho: o código, o que ele faz e por quê. O `GUIA.md` dá a visão geral; aqui é o detalhe.
+Este arquivo percorre os quatro scripts do PC e os seis arquivos MicroPython da placa, na ordem em que o código aparece. Para cada trecho: o código, o que ele faz e por quê. O `GUIA.md` dá a visão geral; aqui é o detalhe.
 
 Bibliotecas que aparecem:
 - **numpy (`np`)**: contas com vetores e números aleatórios.
@@ -363,11 +363,11 @@ def memoria_rf(m):
 ```python
     res = pd.DataFrame(linhas)
     print(res.round(3).to_string(index=False))
-    with open(os.path.join(AQUI, "resultados_comparacao.md"), "w") as f:
+    with open(os.path.join(AQUI, "resultados_comparacao.md"), "w", encoding="utf-8") as f:
         f.write(res.round(3).to_markdown(index=False) + "\n\n")
         ...
 ```
-- `with open(..., "w") as f:` abre o arquivo para escrita e o fecha sozinho no fim do bloco, mesmo se der erro.
+- `with open(..., "w") as f:` abre o arquivo para escrita e o fecha sozinho no fim do bloco, mesmo se der erro. O `encoding="utf-8"` é necessário no Windows: sem ele, o Python grava os acentos na codificação do Windows e o arquivo aparece com "Ã§" e "�" no GitHub.
 - `to_markdown` (precisa da biblioteca `tabulate`) gera a tabela no formato que o GitHub mostra bonito.
 
 ---
@@ -592,6 +592,12 @@ AGUA_DISP = 0.11
 RAIZ_M = 0.6
 DATA_PODA = (2026, 1, 15)
 
+EFICIENCIA = 0.9
+AREA_M2 = 7.0
+VAZAO_L_H = 8.0
+
+P_DEPLECAO = 0.35
+
 def taw():
     return 1000 * AGUA_DISP * RAIZ_M
 
@@ -606,6 +612,8 @@ def kc(d):
 - É o único arquivo que muda de um local para outro. Os pesos são os mesmos em qualquer lugar; o que diz à rede em que solo ela está é o `taw()`.
 - `AGUA_DISP` e `RAIZ_M` são os mesmos parâmetros que o script 01 sorteia, só que agora com o valor real da área. O modelo foi treinado com TAW de 25 a 140 mm; fora disso, a resposta não é confiável.
 - `taw()` é a mesma conta da função `solo()` do script 01 (seção 1.2.1).
+- `EFICIENCIA`, `AREA_M2` e `VAZAO_L_H` são do gotejamento e só servem ao `lamina.py`. Os valores (90%, planta em 3,5 m × 2,0 m, 8 L/h por planta) são ASSUMIDOS: conferir no sistema instalado.
+- `P_DEPLECAO` é a mesma fração p do script 01. Se o Prof. Max indicar outro valor, ele muda nos dois lugares (e o modelo precisa ser retreinado).
 - `dap(hoje)`: `time.mktime` converte uma data em segundos desde uma data fixa. Ele recebe uma tupla de 9 números (ano, mês, dia, hora, minuto, segundo, dia da semana, dia do ano, horário de verão), por isso `+ (0, 0, 0, 0, 0, 0)` completa a data com zeros. Com 9 números a mesma linha funciona no MicroPython e no Python do PC. A diferença em segundos dividida por 86.400 (segundos de um dia) dá o DAP. O `//` é divisão inteira, e o `int()` garante um número inteiro também no PC, onde o `mktime` devolve float.
 - `kc(d)` é a mesma equação do `kc_uva` do script 01 (seção 1.3). `d * d` em vez de `d**2` é um pouco mais rápido no MicroPython.
 - Conferido no MicroPython: `taw()` = 66,0; `dap((2026, 3, 1))` = 45; `kc(45)` = 0,7265.
@@ -650,15 +658,93 @@ print("TAW deste local (config_local.py): %.1f mm" % config_local.taw())
 - `"%-17s"` escreve o texto alinhado à esquerda em 17 colunas, para a tabela sair alinhada no terminal.
 - **Resultado conferido no PC**, num MicroPython compilado com float de 32 bits como o do RP2040: 6 de 6 acertos. O tempo mostrado no PC (~200 µs) não vale para a placa, que é bem mais lenta. Esse é o número que vocês devem medir na BitDogLab.
 
-## 4.5 Como usar no firmware
+## 4.5 `historico.py`
 ```python
-import classificador
+JANELA = 14
+
+class Historico:
+    def __init__(self, arquivo="historico.json"):
+        self.arquivo = arquivo
+        self.zerar()
+        if arquivo:
+            try:
+                with open(arquivo) as f:
+                    e = json.load(f)
+                ...
+            except (OSError, ValueError, KeyError):
+                pass
+```
+- `class Historico` junta os dados (as listas de 14 dias, o déficit) e as funções que mexem neles. `h = Historico()` cria um objeto; `self` é esse objeto dentro das funções.
+- No `__init__`, ele tenta ler o `historico.json`. `OSError` é arquivo que não existe (primeiro uso); `ValueError` e `KeyError` são arquivo cortado ou de outra versão. Em qualquer caso, começa do zero em vez de travar a placa. `arquivo=None` não lê nem grava nada: é o que o script 04 usa no PC.
+- `zerar()` é o começo do ciclo: listas vazias, déficit 0 (o solo está cheio depois da irrigação de pré-poda, como no script 01) e `ultima_irr = 0` (a poda conta como dia 0, igual ao `ultimo = 0` do `simular_ciclo`).
+- `salvar()` grava tudo em JSON. É uma gravação por dia, o que não gasta a flash.
+
+```python
+    def fechar_dia(self, taw, dap, eto, chuva, irrigacao, tmax, tmin, ur, vento, radiacao):
+        if dap <= self.ultimo_dap:
+            self.zerar()
+        ...
+        for lista, v in ((self.etc, etc), (self.chuva, chuva), (self.irr, irrigacao)):
+            lista.append(v)
+            if len(lista) > JANELA:
+                lista.pop(0)
+        ...
+        for n in (3, 7, 14):
+            v["ETc_%dd" % n] = sum(self.etc[-n:])
+        ...
+        return [v[nome] for nome in classificador.FEATURES], self.deficit
+```
+- Se o DAP de hoje não é maior que o do último dia, houve poda (o `DATA_PODA` foi atualizado e o DAP voltou para 0). Então o ciclo recomeça, como cada cenário do script 01 começa do zero.
+- Cada lista guarda no máximo 14 valores: `append` põe o de hoje no fim e `pop(0)` tira o mais velho.
+- `self.etc[-n:]` pega os últimos `n` valores; se ainda houver menos de `n` dias, pega os que existem. É o mesmo que o `rolling(n, min_periods=1)` do script 01.
+- O dicionário `v` tem as 24 entradas pelo nome, e a última linha as põe na ordem de `classificador.FEATURES`. Assim a ordem nunca fica errada, mesmo que o script 03 mude a lista.
+- `irrigacao` é o que foi aplicado hoje, em mm (do registro da válvula). A função roda no fim do dia, depois da irrigação, como no dataset.
+
+## 4.6 `lamina.py`
+```python
+def atualizar_deficit(deficit, etc, chuva, irrigacao, taw, p=cfg.P_DEPLECAO):
+    raw = p * taw
+    ks = 1.0 if deficit <= raw else max(0.0, (taw - deficit) / ((1 - p) * taw))
+    d = deficit + ks * etc - chuva - irrigacao
+    if d < 0.0:
+        return 0.0
+    return d if d < taw else taw
+
+def recomendar(classe, deficit, eficiencia=cfg.EFICIENCIA):
+    if classe == 0:
+        return 0.0, 0.0
+    return deficit, deficit / eficiencia
+
+def tempo_min(bruta, area_m2=cfg.AREA_M2, vazao_l_h=cfg.VAZAO_L_H):
+    return bruta * area_m2 / vazao_l_h * 60
+```
+- `atualizar_deficit` é a mesma conta do `simular_ciclo` (seção 1.6): o Ks calculado com o déficit do começo do dia, depois `déficit + Ks × ETc − chuva − irrigação`, limitado entre 0 e o TAW. Por isso o déficit da placa sai igual ao `Dr` do dataset.
+- `recomendar` usa a classe como gatilho. Adequado: devolve 0. Moderado ou crítico: devolve a lâmina líquida (o próprio déficit, o que falta para encher o solo) e a bruta (líquida ÷ eficiência, porque parte da água do gotejamento se perde).
+- `tempo_min`: 1 mm de água sobre 1 m² é 1 litro. Então `bruta × área` dá os litros por planta, `÷ vazão` dá as horas e `× 60` dá os minutos. Exemplo: 20 mm de déficit → 22,2 mm brutos → 155 L → 1.167 min (19 h). Um déficit grande assim aparece pouco: com a placa irrigando sozinha, a lâmina é pequena e frequente.
+
+## 4.7 Como usar no firmware
+```python
+import classificador, historico, lamina
 import config_local as cfg
 
-d = cfg.dap(hoje)       # hoje = (ano, mês, dia), lido do RTC
-x = [cfg.taw(), d, cfg.kc(d)] + montar_resto()   # vocês escrevem: sensores + histórico de 14 dias
+h = historico.Historico()
+d = cfg.dap(hoje)        # hoje = (ano, mês, dia), lido do RTC
+x, deficit = h.fechar_dia(cfg.taw(), d, eto, chuva, irrigacao_de_hoje,
+                          tmax, tmin, ur, vento, radiacao)
+h.salvar()
 classe, saidas = classificador.classificar(x)
-print(classificador.CLASSES[classe])
+liquida, bruta = lamina.recomendar(classe, deficit)
+minutos = lamina.tempo_min(bruta)
 ```
-- As três primeiras entradas vêm do `config_local.py`. `montar_resto()` devolve as outras 21. Juntas, têm que ser as 24 entradas **na ordem de `classificador.FEATURES`**, sem normalizar. Uma troca de ordem não dá erro: dá uma resposta errada sem aviso, então vale conferir com o `teste_classificador.py` sempre que mexer nisso.
-- Para copiar para a placa, use o Thonny ou o `mpremote cp classificador.py agroedge_pesos.py config_local.py :` e rode o `teste_classificador.py` primeiro.
+- Roda uma vez por dia, no fim do dia. `eto` vem do cálculo de Penman-Monteith; os dados do clima são os totais (chuva, mm) ou médias (UR, vento, radiação) do dia, nas mesmas unidades do CSV do DataClimaBR.
+- O MQTT publica `eto`, `liquida` (ou `bruta`) e `classificador.CLASSES[classe]`, que são os três valores da proposta.
+- Para copiar para a placa, use o Thonny ou `mpremote cp classificador.py agroedge_pesos.py config_local.py historico.py lamina.py :` e rode o `teste_classificador.py` primeiro.
+
+---
+
+# Parte 5: `04_conferir_firmware.py` (roda no PC)
+
+- `repetir_dataset(te)`: para cada ciclo de 2009, cria um `Historico(arquivo=None)` e passa os dias do dataset por `fechar_dia`, como a placa faria. Depois compara as 24 entradas montadas com as colunas do dataset. A maior diferença é 0,0003, que é o arredondamento de 4 casas do CSV. A acurácia com essas entradas é a mesma do script 03 (84,6%).
+- O déficit do `lamina.py` é comparado com o `Dr` do rótulo: a diferença é 0,00 mm.
+- `laco_fechado(te, clima)`: simula a placa no comando. Cada dia aplica a lâmina líquida recomendada na véspera, atualiza o Dr "real" pelo FAO-56 e anota a classe real. Mostra a fração de dias em cada classe e a água usada em relação à ETc.
+- Tudo roda no CPython com os mesmos arquivos do firmware. Também conferimos no MicroPython com float de 32 bits, incluindo gravar e reler o `historico.json` no meio do ciclo: mesmo resultado.

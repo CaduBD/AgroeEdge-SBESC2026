@@ -117,7 +117,7 @@ Cada um é treinado no treino e avaliado na validação pelo **F1 macro**, a mé
   - SVM: precisa guardar milhares de "vetores de suporte" (dias de treino) inteiros.
   - RF: cada nó de cada árvore ocupa ~10 bytes.
 
-Resultado: os três ficam entre 84% e 86% (MLP 85,8%, RF 85,3%, SVM 83,8%), mas o SVM ocupa 1,2 MB e a RF 3,5 MB. A MLP ocupa 5 KB. Por isso a escolha é a MLP.
+Resultado: os três ficam entre 84% e 86% (MLP 85,8%, RF 85,6%, SVM 83,8%), mas o SVM ocupa 1,2 MB e a RF 3,9 MB. A MLP ocupa 5 KB. Por isso a escolha é a MLP.
 
 A acurácia é menor que os ~91% da primeira versão porque agora a poda cai em qualquer época do ano e o solo muda. O problema ficou mais difícil e mais parecido com o campo.
 
@@ -150,7 +150,7 @@ Todos ficam guardados como `array("f", [...])`, vetores de floats de 32 bits, qu
 **Por que não precisamos de TensorFlow Lite nem de INT8:** a rede é tão pequena que dá para escrever a conta dela à mão em poucas linhas de Python (próxima seção). A conta tem cerca de 420 multiplicações e roda uma vez por dia; mesmo sem FPU, isso é rápido.
 
 ### 3.4 A conferência
-O script importa o `classificador.py` de verdade, roda os 3.815 dias de 2009 por ele e compara com o Keras: **as duas respostas são iguais em 100% dos dias, com 84,6% de acurácia e 88,5% dos dias críticos detectados**. Também rodei num MicroPython compilado com float de 32 bits, como o do RP2040, e o resultado foi o mesmo.
+O script importa o `classificador.py` de verdade, roda os 3.815 dias de 2009 por ele e compara com o Keras: **as duas respostas são iguais em 100% dos dias, com 84,6% de acurácia e 89,1% dos dias críticos detectados**. Também rodei num MicroPython compilado com float de 32 bits, como o do RP2040, e o resultado foi o mesmo.
 
 ---
 
@@ -173,21 +173,33 @@ O softmax não é calculado na placa, porque ele não muda qual saída é a maio
 - `AGUA_DISP`: quanta água o solo segura (0,06 a 0,09 arenoso, 0,11 franco-arenoso, 0,15 a 0,18 argiloso/Vertissolo).
 - `RAIZ_M`: profundidade das raízes, de 0,4 a 0,8 m.
 - `DATA_PODA`: data da última poda, para contar o DAP. Atualize a cada poda.
+- `EFICIENCIA`, `AREA_M2` e `VAZAO_L_H`: do sistema de gotejamento, para a lâmina e o tempo de irrigação.
+- `P_DEPLECAO`: a fração p da uva (0,35), a mesma do script 01.
 
 E três funções que o firmware usa para montar a entrada: `taw()` (1000 × água × raiz), `dap(hoje)` (dias desde a poda) e `kc(dap)` (equação de Ávila Netto).
 
 ### 4.4 `teste_classificador.py`
 Roda 6 dias de 2009 (2 de cada classe, em solos de 35 a 111 mm) e mostra a classe prevista, a esperada, o tempo de cada inferência e a memória livre. Serve para confirmar na placa que tudo foi copiado certo e para medir o tempo real.
 
-### 4.5 Como usar no firmware (uma vez por dia)
+### 4.5 `historico.py`
+A rede precisa das somas dos últimos 3, 7 e 14 dias e de quantos dias faz desde a última irrigação. O `historico.py` guarda isso num arquivo `historico.json` na flash, para não perder quando a placa reinicia, e monta as 24 entradas na ordem certa. As contas são as mesmas do `adicionar_janelas` do script 01; o script 04 confere que dão o mesmo resultado. Quando o DAP volta para trás (houve poda e o `DATA_PODA` foi atualizado), ele recomeça o ciclo.
+
+### 4.6 `lamina.py`
+A classe diz se o solo está bem; a lâmina diz quantos mm irrigar. O `lamina.py` acompanha o déficit do solo pela mesma conta do rótulo (FAO-56, eq. 84 e 85): soma o que a planta gastou (Ks × ETc) e tira a chuva e a irrigação. Se a classe for adequado, não irriga. Se for moderado ou crítico, repõe todo o déficit, dividido pela eficiência do gotejamento. O `tempo_min` converte em minutos de válvula: 1 mm em 1 m² é 1 litro.
+
+### 4.7 Como usar no firmware (uma vez por dia, no fim do dia)
 ```python
-import classificador
+import classificador, historico, lamina
 import config_local as cfg
 
-d = cfg.dap(hoje)            # hoje = (ano, mês, dia), do RTC
-x = [cfg.taw(), d, cfg.kc(d)] + montar_resto()   # você escreve: sensores + histórico de 14 dias, na ordem de classificador.FEATURES
+h = historico.Historico()                    # lê o historico.json
+d = cfg.dap(hoje)                            # hoje = (ano, mês, dia), do RTC
+x, deficit = h.fechar_dia(cfg.taw(), d, eto, chuva, irrigacao_de_hoje,
+                          tmax, tmin, ur, vento, radiacao)   # do módulo de sensores e do ET0
+h.salvar()
 classe, saidas = classificador.classificar(x)
-print(classificador.CLASSES[classe])
+liquida, bruta = lamina.recomendar(classe, deficit)
+minutos = lamina.tempo_min(bruta)            # válvula aberta amanhã
 ```
 
 ---
@@ -203,6 +215,7 @@ print(classificador.CLASSES[classe])
    python 01_gerar_dataset.py
    python 02_comparar_modelos.py
    python 03_treinar_mlp.py
+   python 04_conferir_firmware.py
    ```
 3. O `agroedge_pesos.py` é gerado de novo. Copie ele para a placa: o `classificador.py` e o `config_local.py` não mudam.
 
