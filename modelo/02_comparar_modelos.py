@@ -87,7 +87,7 @@ def main():
     res = pd.DataFrame(linhas)
     pd.set_option("display.width", 200)
     print(res.round(3).to_string(index=False))
-    with open(os.path.join(AQUI, "resultados_comparacao.md"), "w") as f:
+    with open(os.path.join(AQUI, "resultados_comparacao.md"), "w", encoding="utf-8") as f:
         f.write("# Comparação MLP × SVM × Random Forest (teste = 2009)\n\n")
         f.write(res.round(3).to_markdown(index=False) + "\n\n")
         for nome, cm in matrizes.items():
