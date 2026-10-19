@@ -2,7 +2,7 @@
 AgroEdge - confere no PC o caminho completo do firmware (historico.py -> classificador.py -> lamina.py).
 
 1. Repete os ciclos de 2009 do dataset dia a dia pelo historico.py, como a placa faria,
-   e confere se as 24 entradas montadas na placa são as mesmas do dataset de treino.
+   e confere se as entradas montadas na placa são as mesmas do dataset de treino.
 2. Compara o déficit que a placa calcula com o Dr do rótulo.
 3. Fecha o laço: simula a placa irrigando sozinha (classe decide se irriga, lamina.py decide
    quanto) nos mesmos ciclos, e mostra em que estado o solo ficou e quanta água foi usada.

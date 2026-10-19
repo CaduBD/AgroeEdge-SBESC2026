@@ -105,11 +105,17 @@ def simular_ciclo(clima, inicio, agua_disp, zr, pol, rng, cenario_id):
 def adicionar_janelas(df):
     """Acumulados que o firmware consegue manter (só passado, por cenário/ciclo)."""
     g = df.groupby(["cenario"], sort=False)
-    for n in (3, 7, 14):
+    for n in (3, 7, 14, 21, 28):
         for col in ("ETc", "chuva", "irrigacao"):
             df[f"{col}_{n}d"] = g[col].transform(lambda s: s.rolling(n, min_periods=1).sum())
-    for n in (7, 14):
-        df[f"saldo_{n}d"] = df[f"chuva_{n}d"] + df[f"irrigacao_{n}d"] - df[f"ETc_{n}d"]
+    for col in ("ETc", "chuva", "irrigacao"):
+        df[f"{col}_ciclo"] = g[col].cumsum()                  # desde a poda
+    for n in ("7d", "14d", "21d", "28d", "ciclo"):
+        df[f"saldo_{n}"] = df[f"chuva_{n}"] + df[f"irrigacao_{n}"] - df[f"ETc_{n}"]
+        # a mesma soma em "tanques": 0,5 = metade do TAW do solo; assim um solo arenoso e um
+        # argiloso com o mesmo valor estão igualmente secos
+        for col in ("ETc", "chuva", "saldo"):
+            df[f"{col}_{n}_taw"] = df[f"{col}_{n}"] / df.TAW
     return df
 
 

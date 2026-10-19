@@ -2,32 +2,32 @@
 
 | modelo        | config                  |   acuracia |   f1_macro |   rec_adequado |   rec_moderado |   rec_critico |   memoria_kb |   us_por_amostra_pc |
 |:--------------|:------------------------|-----------:|-----------:|---------------:|---------------:|--------------:|-------------:|--------------------:|
-| MLP           | (32, 16)                |      0.858 |      0.812 |          0.916 |          0.737 |         0.817 |        5.387 |               0.548 |
-| SVM (RBF)     | C=10, 12072 vetores     |      0.838 |      0.792 |          0.887 |          0.69  |         0.947 |     1226.07  |            1738.2   |
-| Random Forest | 100 árvores, prof. None |      0.856 |      0.804 |          0.924 |          0.737 |         0.727 |     3970.96  |              13.407 |
+| MLP           | (32, 16)                |      0.91  |      0.888 |          0.945 |          0.845 |         0.851 |        7.262 |               0.387 |
+| SVM (RBF)     | C=10, 7631 vetores      |      0.911 |      0.894 |          0.942 |          0.834 |         0.932 |     1222.16  |             459.52  |
+| Random Forest | 100 árvores, prof. None |      0.931 |      0.906 |          0.965 |          0.882 |         0.832 |     1969.37  |              13.373 |
 
 ## Matriz de confusão: MLP (linhas = real, colunas = predito)
 
 |          |   adequado |   moderado |   critico |
 |:---------|-----------:|-----------:|----------:|
-| adequado |       2234 |        205 |         1 |
-| moderado |        184 |        776 |        93 |
-| critico  |          0 |         59 |       263 |
+| adequado |       2307 |        133 |         0 |
+| moderado |        138 |        890 |        25 |
+| critico  |          0 |         48 |       274 |
 
 ## Matriz de confusão: SVM (RBF) (linhas = real, colunas = predito)
 
 |          |   adequado |   moderado |   critico |
 |:---------|-----------:|-----------:|----------:|
-| adequado |       2164 |        273 |         3 |
-| moderado |        159 |        727 |       167 |
-| critico  |          0 |         17 |       305 |
+| adequado |       2298 |        142 |         0 |
+| moderado |        129 |        878 |        46 |
+| critico  |          0 |         22 |       300 |
 
 ## Matriz de confusão: Random Forest (linhas = real, colunas = predito)
 
 |          |   adequado |   moderado |   critico |
 |:---------|-----------:|-----------:|----------:|
-| adequado |       2255 |        185 |         0 |
-| moderado |        214 |        776 |        63 |
-| critico  |          0 |         88 |       234 |
+| adequado |       2354 |         86 |         0 |
+| moderado |        107 |        929 |        17 |
+| critico  |          0 |         54 |       268 |
 
 Memória: estimativa em float32 dos parâmetros embarcados, sem o código que faz a inferência.

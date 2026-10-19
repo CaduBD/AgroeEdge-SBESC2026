@@ -19,7 +19,8 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 FEATURES = ["TAW", "dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
             "vento", "radiacao", "dias_sem_irrigar",
             "ETc_3d", "chuva_3d", "irrigacao_3d", "ETc_7d", "chuva_7d", "irrigacao_7d", "saldo_7d",
-            "ETc_14d", "chuva_14d", "irrigacao_14d", "saldo_14d"]
+            "ETc_14d", "chuva_14d", "irrigacao_14d", "saldo_14d"] + [
+            f"{col}_{n}_taw" for n in ("7d", "14d", "21d", "28d", "ciclo") for col in ("ETc", "chuva", "saldo")]
 NOMES = ["adequado", "moderado", "critico"]
 
 
