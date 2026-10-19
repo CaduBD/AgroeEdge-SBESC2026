@@ -117,9 +117,24 @@ O 90,7% da primeira versão era otimista. Todos os ciclos começavam em 15/01 ou
 - **Placa** (`firmware/modelo/`): o `config_local.py` é o único arquivo que muda por local. Ele guarda a água disponível do solo, a profundidade da raiz e a data da poda, e calcula `taw()`, `dap()` e `kc()`.
 - **Limite de uso:** o modelo foi treinado com TAW de 25 a 140 mm. Fora disso, a resposta não é confiável.
 
-## 9. Pendências
+## 9. E a lâmina de irrigação?
+
+O `classificar(x)` devolve só a **classe** do dia, não quantos mm irrigar. A lâmina pode sair do `Dr` (quanto o solo está seco): pelo FAO-56, `lâmina = Dr ÷ eficiência do gotejamento (~0,9)`. Discutimos três caminhos:
+
+| Caminho | Como | Resultado do teste |
+|---|---|---|
+| Rede com 2 saídas | A MLP também prevê o Dr em mm | Erro médio de 5,0 mm (90% dos dias até 12,4 mm), com Dr médio de 21 mm. Para achar o crítico, o classificador continua melhor (89% contra 69% a 75%). |
+| Balanço FAO-56 na placa | A placa guarda o histórico desde a poda e calcula o Dr exato pela fórmula | Exato, sem rede neural. |
+| Só a classe | Lâmina fora do escopo por enquanto | — |
+
+Ponto a discutir: como o rótulo vem de uma fórmula, a placa poderia calcular o Dr exato se tivesse todo o histórico desde a poda. A rede se justifica quando falta parte do histórico (ela usa só 14 dias) ou quando entrarem sensores de umidade reais. Isso muda o que o artigo defende.
+
+**Decisão (19/10/2026): só a classe por enquanto**, até falar com o Prof. Max.
+
+## 10. Pendências
 
 - Confirmar com o Prof. Max as faixas de solo e raiz, a fração p = 0,35 e o limite Ks = 0,5.
 - Medir o tempo de inferência na BitDogLab.
 - Validar com tensiômetros em campo (Sprint 5). Hoje a acurácia mostra que a rede aprende o balanço do FAO-56, não que acerta o campo.
 - Justificar no relatório a troca de C/TFLite para MicroPython.
+- Decidir com o Prof. Max se a placa deve indicar a lâmina (seção 9).
