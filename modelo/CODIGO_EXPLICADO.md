@@ -178,18 +178,25 @@ def politica_aleatoria(rng, raw):
 ```python
 def adicionar_janelas(df):
     g = df.groupby(["cenario"], sort=False)
-    for n in (3, 7, 14):
+    for n in (3, 7, 14, 21, 28):
         for col in ("ETc", "chuva", "irrigacao"):
             df[f"{col}_{n}d"] = g[col].transform(lambda s: s.rolling(n, min_periods=1).sum())
-    for n in (7, 14):
-        df[f"saldo_{n}d"] = df[f"chuva_{n}d"] + df[f"irrigacao_{n}d"] - df[f"ETc_{n}d"]
+    for col in ("ETc", "chuva", "irrigacao"):
+        df[f"{col}_ciclo"] = g[col].cumsum()
+    for n in ("7d", "14d", "21d", "28d", "ciclo"):
+        df[f"saldo_{n}"] = df[f"chuva_{n}"] + df[f"irrigacao_{n}"] - df[f"ETc_{n}"]
+        for col in ("ETc", "chuva", "saldo"):
+            df[f"{col}_{n}_taw"] = df[f"{col}_{n}"] / df.TAW
     return df
 ```
-- `df.groupby("cenario")` separa a tabela em grupos, um por ciclo × produtor. Isso impede que a soma de 14 dias de um ciclo "vaze" para o ciclo seguinte.
+- `df.groupby("cenario")` separa a tabela em grupos, um por ciclo × produtor. Isso impede que a soma de 28 dias (ou desde a poda) de um ciclo "vaze" para o ciclo seguinte.
 - `f"{col}_{n}d"` é uma **f-string**: monta o texto trocando `{col}` e `{n}` pelos valores. Ex.: `"chuva_7d"`.
 - `s.rolling(n).sum()` é a **soma móvel**: para cada dia, soma os n últimos (incluindo hoje). `min_periods=1` faz os primeiros dias do ciclo somarem o que existe, em vez de dar vazio.
 - `lambda s: ...` é uma função sem nome, de uma linha. `transform` aplica essa função em cada grupo e devolve o resultado alinhado com a tabela original.
-- O laço duplo cria 9 colunas (3 janelas × 3 variáveis), e o segundo laço cria mais 2 de saldo.
+- O laço duplo cria 15 colunas (5 janelas × 3 variáveis).
+- `g[col].cumsum()` é a **soma acumulada**: para cada dia, soma tudo desde o primeiro dia do ciclo, ou seja, desde a poda.
+- O último laço cria o saldo de cada janela e divide ETc, chuva e saldo pelo TAW. Um saldo de −20 mm é grave num solo de 40 mm (metade do tanque) e leve num de 120 mm (um sexto). Dividindo pelo TAW, a rede recebe o número que importa direto, sem ter que aprender essa divisão.
+- Nem todas as colunas viram entrada: a lista `FEATURES` do script 02 escolhe 39 delas.
 
 ## 1.8 `main()`
 ```python
@@ -257,9 +264,10 @@ No scikit-learn, todo modelo tem a mesma "cara": `modelo.fit(X, y)` treina e `mo
 ```python
 FEATURES = ["TAW", "dap", "kc", "ETo", "ETc", "chuva", "irrigacao", "Tmax", "Tmin", "UR",
             "vento", "radiacao", "dias_sem_irrigar",
-            "ETc_3d", ..., "saldo_14d"]
+            "ETc_3d", ..., "saldo_14d"] + [
+            f"{col}_{n}_taw" for n in ("7d", "14d", "21d", "28d", "ciclo") for col in ("ETc", "chuva", "saldo")]
 ```
-A lista define **quais colunas** entram no modelo e **em que ordem**. A primeira é o `TAW`, que diz à rede o tamanho do "tanque" do solo; é ela que permite usar o mesmo modelo em qualquer local. O firmware precisa montar o vetor exatamente nessa ordem. `Dr`, `classe`, `data`, `cenario`, `split` e `interpolado` ficam de fora: são resposta ou controle, não entrada.
+A lista define **quais colunas** entram no modelo e **em que ordem**. A primeira é o `TAW`, que diz à rede o tamanho do "tanque" do solo; é ela que permite usar o mesmo modelo em qualquer local. As 24 primeiras são as da versão anterior; a segunda parte da lista gera as outras 15 (`ETc_7d_taw`, `chuva_7d_taw`, `saldo_7d_taw`, ..., `saldo_ciclo_taw`). O firmware precisa montar o vetor exatamente nessa ordem. `Dr`, `classe`, `data`, `cenario`, `split` e `interpolado` ficam de fora: são resposta ou controle, não entrada.
 
 ## 2.3 Funções de memória
 ```python
@@ -274,7 +282,7 @@ def memoria_mlp(m):
 def memoria_svm(m):
     return (m.support_vectors_.size + m.dual_coef_.size + m.intercept_.size) * 4
 ```
-- O SVM com kernel RBF precisa guardar os **vetores de suporte**: dias de treino inteiros (24 números cada) que definem a fronteira entre as classes. Com 12.072 vetores, são 12.072 × 24 × 4 bytes, mais de 1 MB, e é por isso que ele fica grande.
+- O SVM com kernel RBF precisa guardar os **vetores de suporte**: dias de treino inteiros (39 números cada) que definem a fronteira entre as classes. Com 7.631 vetores, são 7.631 × 39 × 4 bytes, mais de 1 MB, e é por isso que ele fica grande.
 
 ```python
 def memoria_rf(m):
@@ -399,7 +407,7 @@ def lista_f(v):
     return f'array("f", [{nums}])'
 ```
 - `np.asarray(v, dtype=np.float32)` garante que os números estão em float de 32 bits, o mesmo tamanho do float do MicroPython no RP2040.
-- `.ravel()` "achata" uma matriz em uma fila só. A matriz `W1` (24 × 16) vira um vetor de 384 números, linha atrás de linha.
+- `.ravel()` "achata" uma matriz em uma fila só. A matriz `W1` (39 × 16) vira um vetor de 624 números, linha atrás de linha.
 - `f"{x:.8g}"` escreve o número com até 8 algarismos significativos. Um float32 guarda cerca de 7, então 8 garante que nada se perde ao virar texto. O `g` escolhe sozinho entre `0.00123` e `1.23e-05`, o mais curto.
 - O resultado é um texto como `array("f", [0.12, -0.5, ...])`, que é código Python válido. Quando a placa importar o arquivo, isso cria o vetor.
 
@@ -433,7 +441,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
 ```
 - Aqui a normalização é feita "à mão", e não com `StandardScaler`, porque precisamos dos números `media` e `desvio` para escrever no arquivo da placa.
 - `ddof=0` usa o desvio populacional (divide por N), o mesmo do `StandardScaler`. O padrão do pandas é dividir por N−1.
-- `media` tem 24 valores. O numpy subtrai cada um da coluna certa automaticamente (isso se chama *broadcasting*).
+- `media` tem 39 valores. O numpy subtrai cada um da coluna certa automaticamente (isso se chama *broadcasting*).
 
 ## 3.5 Pesos das classes
 ```python
@@ -457,8 +465,8 @@ def exportar(media, desvio, W1, B1, W2, B2):
     p_keras = modelo.predict(Xte, verbose=0).argmax(1)
 ```
 - `Sequential` é uma rede em que os dados passam por uma camada depois da outra.
-- `Input(shape=(24,))` diz que cada exemplo tem 24 números.
-- `Dense(16, activation="relu")`: cada um dos 16 neurônios calcula `relu(w · x + b)`. Isso dá 24 × 16 pesos + 16 bias.
+- `Input(shape=(39,))` diz que cada exemplo tem 39 números (no código, `len(FEATURES)`).
+- `Dense(16, activation="relu")`: cada um dos 16 neurônios calcula `relu(w · x + b)`. Isso dá 39 × 16 pesos + 16 bias.
 - `Dense(3, activation="softmax")`: 3 saídas transformadas em probabilidades.
 - `compile` configura o treino:
   - **Adam** é o algoritmo que ajusta os pesos, com passo (taxa de aprendizado) de 0,001.
@@ -475,7 +483,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
     caminho = exportar(media, desvio, W1, B1, W2, B2)
 ```
 - `modelo.layers` são as duas camadas `Dense`. `get_weights()` devolve `[pesos, bias]` de cada uma.
-- `W1` tem formato (24, 16): `W1[i][j]` liga a entrada `i` ao neurônio `j`. `W2` tem formato (16, 3).
+- `W1` tem formato (39, 16): `W1[i][j]` liga a entrada `i` ao neurônio `j`. `W2` tem formato (16, 3).
 - A linha desempacota os dois pares de uma vez: `(W1, B1)` da primeira camada, `(W2, B2)` da segunda.
 
 ## 3.8 Conferir com o próprio `classificador.py`
@@ -499,7 +507,7 @@ def exportar(media, desvio, W1, B1, W2, B2):
         f.write(f"\nConcordância Keras × classificador.py: {(p_keras == p_mcu).mean():.4f}.\n")
 ```
 - `p_keras == p_mcu` compara os dois vetores posição a posição e dá `True/False`. `.mean()` de `True/False` é a fração de `True`: 1,0000 quer dizer 100% iguais.
-- `n_param` dá 451. Somando as 48 médias e desvios e multiplicando por 4 bytes, dá o tamanho dos vetores na placa (1.996 bytes).
+- `n_param` dá 691. Somando as 78 médias e desvios e multiplicando por 4 bytes, dá o tamanho dos vetores na placa (3.076 bytes).
 
 ---
 
@@ -510,24 +518,24 @@ def exportar(media, desvio, W1, B1, W2, B2):
 # Gerado por modelo/03_treinar_mlp.py - não editar à mão
 from array import array
 
-N_FEATURES = 24
+N_FEATURES = 39
 N_OCULTA = 16
 N_CLASSES = 3
 
-FEATURES = ("dap", "kc", "ETo", ...)
+FEATURES = ("TAW", "dap", "kc", ...)
 CLASSES = ("adequado", "deficit_moderado", "deficit_critico")
 
-MEDIA = array("f", [54, 0.65612018, ...])
-DESVIO = array("f", [31.464266, 0.0713, ...])
-W1 = array("f", [...])   # 368 números
+MEDIA = array("f", [72.2136, 54, 0.65612018, ...])
+DESVIO = array("f", [25.165686, 31.464266, 0.0713, ...])
+W1 = array("f", [...])   # 624 números
 B1 = array("f", [...])   # 16
 W2 = array("f", [...])   # 48
 B2 = array("f", [...])   # 3
 ```
 - É um módulo só de dados: nenhuma função, só constantes.
-- **Por que `array("f")` e não lista comum:** no MicroPython, cada float de uma lista é um objeto separado na memória, com um gasto extra por número. O `array("f")` guarda os números colados, 4 bytes cada, como um vetor em C. Para 499 números, são cerca de 2 KB.
-- **Matriz achatada:** o MicroPython não tem matriz de duas dimensões, então `W1` é guardado como uma fila de 24 × 16 = 384 números, linha após linha. O peso que liga a entrada `i` ao neurônio `j` fica na posição `i * 16 + j`. Exemplo: entrada 2, neurônio 5 → posição 2 × 16 + 5 = 37.
-- `MEDIA[0] = 54` é a média do `dap` (dias 0 a 108 → média 54), e assim por diante na ordem de `FEATURES`.
+- **Por que `array("f")` e não lista comum:** no MicroPython, cada float de uma lista é um objeto separado na memória, com um gasto extra por número. O `array("f")` guarda os números colados, 4 bytes cada, como um vetor em C. Para 769 números, são cerca de 3 KB.
+- **Matriz achatada:** o MicroPython não tem matriz de duas dimensões, então `W1` é guardado como uma fila de 39 × 16 = 624 números, linha após linha. O peso que liga a entrada `i` ao neurônio `j` fica na posição `i * 16 + j`. Exemplo: entrada 2, neurônio 5 → posição 2 × 16 + 5 = 37.
+- `MEDIA[0] = 72,2` é a média do `TAW` no treino, e `MEDIA[1] = 54` é a média do `dap` (dias 0 a 108 → média 54), e assim por diante na ordem de `FEATURES`.
 
 ## 4.2 `classificador.py` (escrito à mão)
 ```python
@@ -544,13 +552,13 @@ def classificar(x):
     if len(x) != P.N_FEATURES:
         raise ValueError("esperava %d features" % P.N_FEATURES)
 ```
-- Confere se chegaram 24 números. Se não, `raise` interrompe com uma mensagem de erro clara, em vez de dar um resultado errado sem avisar.
+- Confere se chegaram 39 números. Se não, `raise` interrompe com uma mensagem de erro clara, em vez de dar um resultado errado sem avisar.
 - `"%d" % valor` é a formatação de texto antiga do Python, que o MicroPython também aceita.
 
 ```python
     z = [(x[i] - P.MEDIA[i]) / P.DESVIO[i] for i in range(P.N_FEATURES)]
 ```
-- **Passo 1, normalização:** a mesma conta do `norm` do script 03, feita para cada uma das 24 entradas com uma list comprehension.
+- **Passo 1, normalização:** a mesma conta do `norm` do script 03, feita para cada uma das 39 entradas com uma list comprehension.
 
 ```python
     h = []
@@ -562,10 +570,10 @@ def classificar(x):
 ```
 - **Passo 2, camada escondida.** Para cada neurônio `j` (16 voltas):
   - começa a soma `s` pelo bias do neurônio;
-  - soma `entrada × peso` para as 24 entradas (é o produto escalar `z · W1[:, j]`);
+  - soma `entrada × peso` para as 39 entradas (é o produto escalar `z · W1[:, j]`);
   - aplica a **ReLU**: se a soma deu negativa, vira 0.
 - `h` termina com 16 valores, as "ativações" da camada escondida.
-- São 16 × 24 = 384 multiplicações. É exatamente o que o `Dense(16, activation="relu")` do Keras calcula.
+- São 16 × 39 = 624 multiplicações. É exatamente o que o `Dense(16, activation="relu")` do Keras calcula.
 
 ```python
     saidas = []
@@ -633,7 +641,7 @@ else:
     diferenca_us = lambda fim, inicio: fim - inicio
 
 DIAS = (
-    ((42.71, 55, 0.7355, ...), 0),  # 2009-08-13, TAW 43 mm
+    ((41.91, 67, 0.7252, ...), 0),  # 2009-10-13, TAW 42 mm, DAP 67
     ...
 )
 
@@ -650,17 +658,17 @@ for x, esperada in DIAS:
 print("acertos: %d de %d" % (acertos, len(DIAS)))
 print("TAW deste local (config_local.py): %.1f mm" % config_local.taw())
 ```
-- `DIAS` é uma tupla de pares `(features, classe_esperada)`: 6 dias de 2009, 2 de cada classe, em solos de 35 a 111 mm. O primeiro número de cada dia é o TAW.
+- `DIAS` é uma tupla de pares `(features, classe_esperada)`: 6 dias de 2009, 2 de cada classe, em solos de 42 a 100 mm e com DAP de 35 em diante (para usar as janelas de 28 dias). O primeiro número de cada dia é o TAW.
 - `NA_PLACA` descobre se o script está no MicroPython: só lá o `gc` tem `mem_free`. No PC, o relógio em µs vem de `time.perf_counter_ns()` (nanossegundos ÷ 1000). `hasattr(objeto, "nome")` responde se o objeto tem aquele atributo. Assim o mesmo teste roda no PC e na placa.
 - `gc` é o coletor de lixo (*garbage collector*). `gc.collect()` libera a memória que não é mais usada, e `gc.mem_free()` mostra quanto sobrou. Isso é específico do MicroPython.
 - `time.ticks_us()` lê um relógio em microssegundos. `time.ticks_diff(fim, início)` faz a subtração do jeito certo mesmo quando o contador "dá a volta" (passa do valor máximo e recomeça do zero). São funções do MicroPython; no Python normal não existem.
 - `acertos += classe == esperada`: a comparação dá `True` (vale 1) ou `False` (vale 0), então soma 1 a cada acerto.
 - `"%-17s"` escreve o texto alinhado à esquerda em 17 colunas, para a tabela sair alinhada no terminal.
-- **Resultado conferido no PC**, num MicroPython compilado com float de 32 bits como o do RP2040: 6 de 6 acertos. O tempo mostrado no PC (~200 µs) não vale para a placa, que é bem mais lenta. Esse é o número que vocês devem medir na BitDogLab.
+- **Resultado conferido no PC**, num MicroPython compilado com float de 32 bits como o do RP2040: 6 de 6 acertos. O tempo mostrado no PC (~300 µs) não vale para a placa, que é bem mais lenta. Esse é o número que vocês devem medir na BitDogLab.
 
 ## 4.5 `historico.py`
 ```python
-JANELA = 14
+JANELA = 28
 
 class Historico:
     def __init__(self, arquivo="historico.json"):
@@ -674,9 +682,9 @@ class Historico:
             except (OSError, ValueError, KeyError):
                 pass
 ```
-- `class Historico` junta os dados (as listas de 14 dias, o déficit) e as funções que mexem neles. `h = Historico()` cria um objeto; `self` é esse objeto dentro das funções.
+- `class Historico` junta os dados (as listas de 28 dias, as somas desde a poda, o déficit) e as funções que mexem neles. `h = Historico()` cria um objeto; `self` é esse objeto dentro das funções.
 - No `__init__`, ele tenta ler o `historico.json`. `OSError` é arquivo que não existe (primeiro uso); `ValueError` e `KeyError` são arquivo cortado ou de outra versão. Em qualquer caso, começa do zero em vez de travar a placa. `arquivo=None` não lê nem grava nada: é o que o script 04 usa no PC.
-- `zerar()` é o começo do ciclo: listas vazias, déficit 0 (o solo está cheio depois da irrigação de pré-poda, como no script 01) e `ultima_irr = 0` (a poda conta como dia 0, igual ao `ultimo = 0` do `simular_ciclo`).
+- `zerar()` é o começo do ciclo: listas vazias, somas do ciclo em 0, déficit 0 (o solo está cheio depois da irrigação de pré-poda, como no script 01) e `ultima_irr = 0` (a poda conta como dia 0, igual ao `ultimo = 0` do `simular_ciclo`).
 - `salvar()` grava tudo em JSON. É uma gravação por dia, o que não gasta a flash.
 
 ```python
@@ -689,15 +697,24 @@ class Historico:
             if len(lista) > JANELA:
                 lista.pop(0)
         ...
-        for n in (3, 7, 14):
-            v["ETc_%dd" % n] = sum(self.etc[-n:])
+        self.ciclo = [self.ciclo[0] + etc, self.ciclo[1] + chuva, self.ciclo[2] + irrigacao]
         ...
+        for n in (3, 7, 14, 21, 28):
+            v["ETc_%dd" % n] = sum(self.etc[-n:])
+            ...
+        v["ETc_ciclo"], v["chuva_ciclo"], v["irrigacao_ciclo"] = self.ciclo
+        for n in ("7d", "14d", "21d", "28d", "ciclo"):
+            v["saldo_" + n] = v["chuva_" + n] + v["irrigacao_" + n] - v["ETc_" + n]
+            for col in ("ETc_", "chuva_", "saldo_"):
+                v[col + n + "_taw"] = v[col + n] / taw
         return [v[nome] for nome in classificador.FEATURES], self.deficit
 ```
 - Se o DAP de hoje não é maior que o do último dia, houve poda (o `DATA_PODA` foi atualizado e o DAP voltou para 0). Então o ciclo recomeça, como cada cenário do script 01 começa do zero.
-- Cada lista guarda no máximo 14 valores: `append` põe o de hoje no fim e `pop(0)` tira o mais velho.
+- Cada lista guarda no máximo 28 valores: `append` põe o de hoje no fim e `pop(0)` tira o mais velho.
 - `self.etc[-n:]` pega os últimos `n` valores; se ainda houver menos de `n` dias, pega os que existem. É o mesmo que o `rolling(n, min_periods=1)` do script 01.
-- O dicionário `v` tem as 24 entradas pelo nome, e a última linha as põe na ordem de `classificador.FEATURES`. Assim a ordem nunca fica errada, mesmo que o script 03 mude a lista.
+- `self.ciclo` soma ETc, chuva e irrigação desde a poda, como o `cumsum()` do script 01. Não precisa guardar todos os dias do ciclo: basta somar o de hoje ao total de ontem.
+- `v[col + n + "_taw"]` divide pelo TAW, igual ao script 01. Um único laço monta as 15 entradas em "tanques".
+- O dicionário `v` tem as 39 entradas pelo nome (e mais algumas somas que a rede não usa), e a última linha as põe na ordem de `classificador.FEATURES`. Assim a ordem nunca fica errada, mesmo que o script 03 mude a lista.
 - `irrigacao` é o que foi aplicado hoje, em mm (do registro da válvula). A função roda no fim do dia, depois da irrigação, como no dataset.
 
 ## 4.6 `lamina.py`
@@ -744,7 +761,7 @@ minutos = lamina.tempo_min(bruta)
 
 # Parte 5: `04_conferir_firmware.py` (roda no PC)
 
-- `repetir_dataset(te)`: para cada ciclo de 2009, cria um `Historico(arquivo=None)` e passa os dias do dataset por `fechar_dia`, como a placa faria. Depois compara as 24 entradas montadas com as colunas do dataset. A maior diferença é 0,0003, que é o arredondamento de 4 casas do CSV. A acurácia com essas entradas é a mesma do script 03 (84,6%).
+- `repetir_dataset(te)`: para cada ciclo de 2009, cria um `Historico(arquivo=None)` e passa os dias do dataset por `fechar_dia`, como a placa faria. Depois compara as 39 entradas montadas com as colunas do dataset. A maior diferença é 0,0003, que é o arredondamento de 4 casas do CSV. A acurácia com essas entradas é a mesma do script 03 (84,6%).
 - O déficit do `lamina.py` é comparado com o `Dr` do rótulo: a diferença é 0,00 mm.
 - `laco_fechado(te, clima)`: simula a placa no comando. Cada dia aplica a lâmina líquida recomendada na véspera, atualiza o Dr "real" pelo FAO-56 e anota a classe real. Mostra a fração de dias em cada classe e a água usada em relação à ETc.
 - Tudo roda no CPython com os mesmos arquivos do firmware. Também conferimos no MicroPython com float de 32 bits, incluindo gravar e reler o `historico.json` no meio do ciclo: mesmo resultado.

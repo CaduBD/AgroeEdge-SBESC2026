@@ -4,7 +4,7 @@ Sistema embarcado de irrigação de precisão para o Vale do São Francisco, na 
 
 ## Pastas
 - [`modelo/`](modelo/README.md): dataset rotulado (uva Itália, Petrolina 2000–2009), comparação MLP × SVM × Random Forest, treino da MLP final e conferência do firmware no PC.
-- `firmware/modelo/`: o que vai para a placa, em MicroPython: classificador, histórico de 14 dias, lâmina de irrigação e configuração do local.
+- `firmware/modelo/`: o que vai para a placa, em MicroPython: classificador, histórico de 28 dias, lâmina de irrigação e configuração do local.
 
 ## Documentação
 - [`modelo/README.md`](modelo/README.md): como rodar e o resumo dos resultados.

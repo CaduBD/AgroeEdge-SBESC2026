@@ -79,7 +79,7 @@ Cada linha guarda também o `TAW` do ciclo, que vira uma feature.
 **Exemplo de um dia (solo de 66 mm):** ontem Dr = 20 mm. Hoje ETo = 6 mm, Kc = 0,7, então ETc = 4,2 mm. Não choveu e não irrigou. Como 20 ≤ 23,1, Ks = 1. Dr = 20 − 0 − 0 + 4,2 = **24,2 mm** → passou de 23,1, então hoje é "déficit moderado".
 
 ### 1.7 `adicionar_janelas(df)`: a memória dos últimos dias
-A planta não sabe só do dia de hoje: o estado do solo é a soma do passado. Então, para cada dia, somamos ETc, chuva e irrigação dos últimos **3, 7 e 14 dias**, e o **saldo** (`chuva + irrigação − ETc`) de 7 e 14 dias. São essas somas que o firmware vai precisar guardar.
+A planta não sabe só do dia de hoje: o estado do solo é a soma do passado. Então, para cada dia, somamos ETc, chuva e irrigação dos últimos **3, 7, 14, 21 e 28 dias** e **desde a poda**, e o **saldo** (`chuva + irrigação − ETc`) de cada janela. As somas de 7 dias em diante também são divididas pelo TAW: assim "meio tanque" quer dizer a mesma coisa num solo arenoso e num argiloso. São essas somas que o firmware vai precisar guardar.
 
 ### 1.8 `main()`
 Para cada ano, sorteia 48 ciclos. Cada ciclo tem a sua data de poda (qualquer dia do ano, porque no Vale não há inverno e cada produtor poda quando quer), o seu solo, a sua raiz e o seu produtor. Ciclos que passariam do fim de 2009 ficam de fora. São **467 ciclos**, cerca de 50.900 dias. Separa pelo ano da poda:
@@ -95,8 +95,8 @@ Saída: `dados/dataset_uva.csv`.
 
 ## 2. `02_comparar_modelos.py`: qual algoritmo usar
 
-### 2.1 As 24 features (entradas)
-`FEATURES` é a lista do que o modelo recebe: o `TAW` do solo, dia do ciclo (`dap`), `kc`, `ETo`, `ETc`, chuva e irrigação do dia, Tmax, Tmin, UR, vento, radiação, `dias_sem_irrigar` e as somas de 3/7/14 dias. **Note que `Dr` não está na lista**: o modelo tem que adivinhar o estado do solo só com o que o sensor e o histórico mostram.
+### 2.1 As 39 features (entradas)
+`FEATURES` é a lista do que o modelo recebe: o `TAW` do solo, dia do ciclo (`dap`), `kc`, `ETo`, `ETc`, chuva e irrigação do dia, Tmax, Tmin, UR, vento, radiação, `dias_sem_irrigar`, as somas de 3/7/14 dias e as somas de 7 a 28 dias e desde a poda divididas pelo TAW. **Note que `Dr` não está na lista**: o modelo tem que adivinhar o estado do solo só com o que o sensor e o histórico mostram.
 
 ### 2.2 Normalização
 `StandardScaler` transforma cada feature em `(x − média) / desvio`. Assim, chuva em mm e UR em % ficam na mesma escala, e a rede aprende melhor. A média e o desvio são calculados **só no treino**, porque o modelo não pode "espiar" os dados de teste.
@@ -117,9 +117,9 @@ Cada um é treinado no treino e avaliado na validação pelo **F1 macro**, a mé
   - SVM: precisa guardar milhares de "vetores de suporte" (dias de treino) inteiros.
   - RF: cada nó de cada árvore ocupa ~10 bytes.
 
-Resultado: os três ficam entre 84% e 86% (MLP 85,8%, RF 85,6%, SVM 83,8%), mas o SVM ocupa 1,2 MB e a RF 3,9 MB. A MLP ocupa 5 KB. Por isso a escolha é a MLP.
+Resultado: os três ficam entre 91% e 93% (MLP 91,0%, SVM 91,1%, RF 93,1%). A RF acerta mais dias no total, mas acha só 83% dos dias críticos e ocupa 1,9 MB; o SVM ocupa 1,2 MB. A RAM do RP2040 é de 264 KB. A MLP ocupa 7 KB e, na versão final, acha 95% dos críticos. Por isso a escolha é a MLP.
 
-A acurácia é menor que os ~91% da primeira versão porque agora a poda cai em qualquer época do ano e o solo muda. O problema ficou mais difícil e mais parecido com o campo.
+Com só 14 dias de memória, a acurácia tinha caído para cerca de 85% quando a poda passou a cair em qualquer época do ano e o solo passou a variar. O déficit do solo vem acumulando desde a poda, e 14 dias não bastavam para enxergar isso: o erro crescia ao longo do ciclo. Com as janelas de 28 dias e as somas desde a poda, voltou para cerca de 91% (DECISOES.md, seção 11).
 
 ---
 
@@ -127,13 +127,13 @@ A acurácia é menor que os ~91% da primeira versão porque agora a poda cai em 
 
 ### 3.1 A rede
 ```
-24 entradas → 16 neurônios (ReLU) → 3 saídas (softmax)
+39 entradas → 16 neurônios (ReLU) → 3 saídas (softmax)
 ```
 - Cada neurônio faz `soma(peso × entrada) + bias` e passa pela **ReLU** (`max(0, x)`).
 - O **softmax** transforma as 3 saídas em probabilidades que somam 1. A classe escolhida é a de maior valor.
-- Total: 24×16 + 16 + 16×3 + 3 = **451 parâmetros**.
+- Total: 39×16 + 16 + 16×3 + 3 = **691 parâmetros**.
 
-A comparação do script 02 escolheu duas camadas (32 e 16), mas a de 16 sozinha fica a 1 ponto dela com um terço do tamanho, então usamos a menor.
+A comparação do script 02 escolheu duas camadas (32 e 16), mas a de 16 sozinha acerta praticamente o mesmo com pouco mais de um terço do tamanho, então usamos a menor.
 
 ### 3.2 O treino
 - `class_weight`: erros nas classes raras (crítico é cerca de 13%) pesam mais, para o modelo não as ignorar.
@@ -145,12 +145,12 @@ Depois do treino, o script tira de dentro do Keras os números da rede (`get_wei
 - `W1` e `B1`, os pesos e bias da camada escondida;
 - `W2` e `B2`, os da camada de saída.
 
-Todos ficam guardados como `array("f", [...])`, vetores de floats de 32 bits, que ocupam 4 bytes por número (cerca de 2 KB no total).
+Todos ficam guardados como `array("f", [...])`, vetores de floats de 32 bits, que ocupam 4 bytes por número (cerca de 3 KB no total).
 
-**Por que não precisamos de TensorFlow Lite nem de INT8:** a rede é tão pequena que dá para escrever a conta dela à mão em poucas linhas de Python (próxima seção). A conta tem cerca de 420 multiplicações e roda uma vez por dia; mesmo sem FPU, isso é rápido.
+**Por que não precisamos de TensorFlow Lite nem de INT8:** a rede é tão pequena que dá para escrever a conta dela à mão em poucas linhas de Python (próxima seção). A conta tem cerca de 670 multiplicações e roda uma vez por dia; mesmo sem FPU, isso é rápido.
 
 ### 3.4 A conferência
-O script importa o `classificador.py` de verdade, roda os 3.815 dias de 2009 por ele e compara com o Keras: **as duas respostas são iguais em 100% dos dias, com 84,6% de acurácia e 89,1% dos dias críticos detectados**. Também rodei num MicroPython compilado com float de 32 bits, como o do RP2040, e o resultado foi o mesmo.
+O script importa o `classificador.py` de verdade, roda os 3.815 dias de 2009 por ele e compara com o Keras: **as duas respostas são iguais em 100% dos dias, com 90,9% de acurácia e 95,0% dos dias críticos detectados**. Também rodei num MicroPython compilado com float de 32 bits, como o do RP2040, e o resultado foi o mesmo.
 
 ---
 
@@ -161,7 +161,7 @@ Só dados: `N_FEATURES`, `N_OCULTA`, `N_CLASSES`, os nomes das features (`FEATUR
 
 ### 4.2 `classificador.py` (escrito à mão)
 Tem uma função, `classificar(x)`, que faz quatro passos:
-1. **Normaliza:** `z = (x − média) / desvio` para cada uma das 24 entradas.
+1. **Normaliza:** `z = (x − média) / desvio` para cada uma das 39 entradas.
 2. **Camada escondida:** para cada um dos 16 neurônios, soma `z[i] × W1` + bias e aplica a ReLU.
 3. **Camada de saída:** para cada uma das 3 classes, soma `h[j] × W2` + bias.
 4. **Escolhe:** devolve o índice da maior saída (0 = adequado, 1 = moderado, 2 = crítico) e as 3 saídas.
@@ -179,10 +179,10 @@ O softmax não é calculado na placa, porque ele não muda qual saída é a maio
 E três funções que o firmware usa para montar a entrada: `taw()` (1000 × água × raiz), `dap(hoje)` (dias desde a poda) e `kc(dap)` (equação de Ávila Netto).
 
 ### 4.4 `teste_classificador.py`
-Roda 6 dias de 2009 (2 de cada classe, em solos de 35 a 111 mm) e mostra a classe prevista, a esperada, o tempo de cada inferência e a memória livre. Serve para confirmar na placa que tudo foi copiado certo e para medir o tempo real.
+Roda 6 dias de 2009 (2 de cada classe, em solos de 42 a 100 mm) e mostra a classe prevista, a esperada, o tempo de cada inferência e a memória livre. Serve para confirmar na placa que tudo foi copiado certo e para medir o tempo real.
 
 ### 4.5 `historico.py`
-A rede precisa das somas dos últimos 3, 7 e 14 dias e de quantos dias faz desde a última irrigação. O `historico.py` guarda isso num arquivo `historico.json` na flash, para não perder quando a placa reinicia, e monta as 24 entradas na ordem certa. As contas são as mesmas do `adicionar_janelas` do script 01; o script 04 confere que dão o mesmo resultado. Quando o DAP volta para trás (houve poda e o `DATA_PODA` foi atualizado), ele recomeça o ciclo.
+A rede precisa das somas dos últimos 3 a 28 dias, das somas desde a poda e de quantos dias faz desde a última irrigação. O `historico.py` guarda isso num arquivo `historico.json` na flash, para não perder quando a placa reinicia, e monta as 39 entradas na ordem certa. As contas são as mesmas do `adicionar_janelas` do script 01; o script 04 confere que dão o mesmo resultado. Quando o DAP volta para trás (houve poda e o `DATA_PODA` foi atualizado), ele recomeça o ciclo.
 
 ### 4.6 `lamina.py`
 A classe diz se o solo está bem; a lâmina diz quantos mm irrigar. O `lamina.py` acompanha o déficit do solo pela mesma conta do rótulo (FAO-56, eq. 84 e 85): soma o que a planta gastou (Ks × ETc) e tira a chuva e a irrigação. Se a classe for adequado, não irriga. Se for moderado ou crítico, repõe todo o déficit, dividido pela eficiência do gotejamento. O `tempo_min` converte em minutos de válvula: 1 mm em 1 m² é 1 litro.

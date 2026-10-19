@@ -14,11 +14,11 @@ Em `../firmware/modelo/`, copie para a placa:
 - `agroedge_pesos.py`: pesos, bias, médias e desvios (gerado pelo script 03, não editar).
 - `classificador.py`: a inferência da MLP em Python puro; use `classificador.classificar(x)`.
 - `config_local.py`: **o único arquivo que muda por local**: água disponível do solo, profundidade da raiz, data da poda, eficiência, área e vazão por planta. Calcula `taw()`, `dap(hoje)` e `kc(dap)`.
-- `historico.py`: guarda os últimos 14 dias num JSON na flash e monta as 24 entradas do dia, com as mesmas contas do script 01.
+- `historico.py`: guarda os últimos 28 dias e as somas desde a poda num JSON na flash e monta as 39 entradas do dia, com as mesmas contas do script 01.
 - `lamina.py`: a lâmina de irrigação pelo FAO-56 (seção abaixo).
 - `teste_classificador.py`: roda 6 dias de 2009 na placa e mostra classe, tempo e memória livre.
 
-O modelo é geral: o TAW do solo é uma das entradas, então os mesmos pesos servem para qualquer solo com TAW entre 25 e 140 mm, sem retreinar. Roda em float, sem TensorFlow Lite nem quantização: são 451 parâmetros (2 KB em `array('f')`). Conferido no MicroPython 1.30 para Linux compilado com float de 32 bits, como no RP2040: mesma classe que o Keras nos 3.815 dias de teste (84,6% de acurácia, 89,1% dos críticos detectados). O tempo na BitDogLab ainda precisa ser medido com o `teste_classificador.py`.
+O modelo é geral: o TAW do solo é uma das entradas, então os mesmos pesos servem para qualquer solo com TAW entre 25 e 140 mm, sem retreinar. Roda em float, sem TensorFlow Lite nem quantização: são 691 parâmetros (3 KB em `array('f')`). Conferido no MicroPython 1.30 para Linux compilado com float de 32 bits, como no RP2040: mesma classe que o Keras nos 3.815 dias de teste (90,9% de acurácia, 95,0% dos críticos detectados). O tempo na BitDogLab ainda precisa ser medido com o `teste_classificador.py`.
 
 ## Lâmina de irrigação
 Como na proposta, a lâmina sai do FAO-56 e a classe sai do modelo. A classe decide **se** irriga e o balanço decide **quanto**:
@@ -26,7 +26,7 @@ Como na proposta, a lâmina sai do FAO-56 e a classe sai do modelo. A classe dec
 - `lamina.recomendar(classe, deficit)`: adequado não irriga; moderado ou crítico repõe todo o déficit. Devolve a lâmina líquida e a bruta (líquida ÷ eficiência).
 - `lamina.tempo_min(bruta)`: minutos de válvula aberta, pela área e vazão do `config_local.py`.
 
-Com a placa irrigando sozinha nos 35 ciclos de 2009 (script 04), o solo ficou adequado em 95,8% dos dias e não teve nenhum dia crítico, contra 64% e 8,4% dos produtores simulados do dataset.
+Com a placa irrigando sozinha nos 35 ciclos de 2009 (script 04), o solo ficou adequado em 94,6% dos dias e não teve nenhum dia crítico, contra 64% e 8,4% dos produtores simulados do dataset.
 
 ## Regra de rotulagem
 Balanço hídrico diário do solo do FAO-56 (cap. 8, eq. 84 e 85), sobre o clima real de Petrolina 2000–2009 (DataClimaBR):
@@ -48,9 +48,12 @@ Ficam no topo do `01_gerar_dataset.py`; troque e rode de novo.
 - Limite do crítico em Ks = 0,5.
 - Os 2 dias faltantes no CSV (08/10/2000 e 14/10/2001) foram interpolados (coluna `interpolado`).
 
-## Features (24, nesta ordem no firmware)
-TAW, dap, kc, ETo, ETc, chuva, irrigacao, Tmax, Tmin, UR, vento, radiacao, dias_sem_irrigar, e somas móveis de 3, 7 e 14 dias de ETc, chuva e irrigação, mais saldo (chuva + irrigação − ETc) de 7 e 14 dias.
-O firmware precisa saber a irrigação aplicada (registro da válvula ou hidrômetro) e guardar 14 dias de histórico.
+## Features (39, nesta ordem no firmware)
+- TAW, dap, kc, ETo, ETc, chuva, irrigacao, Tmax, Tmin, UR, vento, radiacao, dias_sem_irrigar.
+- Somas móveis de 3, 7 e 14 dias de ETc, chuva e irrigação, mais o saldo (chuva + irrigação − ETc) de 7 e 14 dias.
+- ETc, chuva e saldo de 7, 14, 21 e 28 dias e desde a poda, divididos pelo TAW (em "tanques" do solo).
+
+O firmware precisa saber a irrigação aplicada (registro da válvula ou hidrômetro) e guardar 28 dias de histórico. As janelas longas e as somas desde a poda subiram a acurácia de 84,6% para 90,9% ([DECISOES.md](DECISOES.md), seção 11).
 
 ## Divisão
 Pelo ano da poda: treino 2000–2006, validação 2007–2008, teste 2009. Normalização calculada só no treino. Hiperparâmetros escolhidos pela validação (F1 macro).
@@ -59,4 +62,4 @@ Pelo ano da poda: treino 2000–2006, validação 2007–2008, teste 2009. Norma
 - O rótulo é sintético: a acurácia mostra que o modelo aprende o balanço do FAO-56, não que acerta o campo. A prova real é com tensiômetros (Sprint 5).
 - O clima vem de grade interpolada (BR-DWGD), não dos sensores do protótipo.
 - A memória do SVM e da RF é estimativa dos parâmetros em float32, sem o código de inferência.
-- Com o histórico completo, a placa calcula o mesmo Dr do rótulo pela fórmula, e limiares nesse Dr acertam 100% do rótulo sintético, contra 84,6% da rede. Ver [DECISOES.md](DECISOES.md), seção 10.
+- Com o histórico completo, a placa calcula o mesmo Dr do rótulo pela fórmula, e limiares nesse Dr acertam 100% do rótulo sintético, contra 90,9% da rede. Ver [DECISOES.md](DECISOES.md), seção 10.
