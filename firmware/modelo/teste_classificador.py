@@ -8,6 +8,14 @@ import time
 import classificador
 import config_local
 
+# no PC (Python normal) não existem gc.mem_free nem time.ticks_us; aí usamos equivalentes
+NA_PLACA = hasattr(gc, "mem_free")
+if NA_PLACA:
+    agora_us, diferenca_us = time.ticks_us, time.ticks_diff
+else:
+    agora_us = lambda: time.perf_counter_ns() // 1000
+    diferenca_us = lambda fim, inicio: fim - inicio
+
 # (features na ordem de classificador.FEATURES, classe esperada)
 DIAS = (
     ((42.71, 55, 0.7355, 5.282, 3.885, 0, 0, 29.45, 20.38, 56.59, 3.189, 18.58, 1, 12.42, 0, 20.12, 27.78, 0.405, 20.12, -7.249, 51.87, 2.042, 49.69, -0.1408), 0),  # 2009-08-13, TAW 43 mm
@@ -19,12 +27,12 @@ DIAS = (
 )
 
 gc.collect()
-print("memoria livre:", gc.mem_free(), "bytes")
+print("memoria livre:", gc.mem_free() if NA_PLACA else "(só na placa)", "bytes" if NA_PLACA else "")
 acertos = 0
 for x, esperada in DIAS:
-    t0 = time.ticks_us()
+    t0 = agora_us()
     classe, saidas = classificador.classificar(x)
-    dt = time.ticks_diff(time.ticks_us(), t0)
+    dt = diferenca_us(agora_us(), t0)
     acertos += classe == esperada
     print("%-17s esperado %-17s %6d us" % (classificador.CLASSES[classe],
                                           classificador.CLASSES[esperada], dt))

@@ -21,9 +21,9 @@ def taw():
 
 def dap(hoje):
     """Dias após a poda. hoje = (ano, mês, dia)."""
-    a = time.mktime(DATA_PODA + (0, 0, 0, 0, 0))
-    b = time.mktime(tuple(hoje) + (0, 0, 0, 0, 0))
-    return (b - a) // 86400
+    a = time.mktime(DATA_PODA + (0, 0, 0, 0, 0, 0))
+    b = time.mktime(tuple(hoje) + (0, 0, 0, 0, 0, 0))
+    return int((b - a) // 86400)
 
 
 def kc(d):

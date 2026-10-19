@@ -596,9 +596,9 @@ def taw():
     return 1000 * AGUA_DISP * RAIZ_M
 
 def dap(hoje):
-    a = time.mktime(DATA_PODA + (0, 0, 0, 0, 0))
-    b = time.mktime(tuple(hoje) + (0, 0, 0, 0, 0))
-    return (b - a) // 86400
+    a = time.mktime(DATA_PODA + (0, 0, 0, 0, 0, 0))
+    b = time.mktime(tuple(hoje) + (0, 0, 0, 0, 0, 0))
+    return int((b - a) // 86400)
 
 def kc(d):
     return -8e-5 * d * d + 0.0089 * d + 0.488
@@ -606,7 +606,7 @@ def kc(d):
 - É o único arquivo que muda de um local para outro. Os pesos são os mesmos em qualquer lugar; o que diz à rede em que solo ela está é o `taw()`.
 - `AGUA_DISP` e `RAIZ_M` são os mesmos parâmetros que o script 01 sorteia, só que agora com o valor real da área. O modelo foi treinado com TAW de 25 a 140 mm; fora disso, a resposta não é confiável.
 - `taw()` é a mesma conta da função `solo()` do script 01 (seção 1.2.1).
-- `dap(hoje)`: `time.mktime` converte uma data em segundos desde uma data fixa. No MicroPython ele recebe uma tupla de 8 números (ano, mês, dia, hora, minuto, segundo, dia da semana, dia do ano), por isso `+ (0, 0, 0, 0, 0)` completa a data com zeros. A diferença em segundos dividida por 86.400 (segundos de um dia) dá o DAP. O `//` é divisão inteira.
+- `dap(hoje)`: `time.mktime` converte uma data em segundos desde uma data fixa. Ele recebe uma tupla de 9 números (ano, mês, dia, hora, minuto, segundo, dia da semana, dia do ano, horário de verão), por isso `+ (0, 0, 0, 0, 0, 0)` completa a data com zeros. Com 9 números a mesma linha funciona no MicroPython e no Python do PC. A diferença em segundos dividida por 86.400 (segundos de um dia) dá o DAP. O `//` é divisão inteira, e o `int()` garante um número inteiro também no PC, onde o `mktime` devolve float.
 - `kc(d)` é a mesma equação do `kc_uva` do script 01 (seção 1.3). `d * d` em vez de `d**2` é um pouco mais rápido no MicroPython.
 - Conferido no MicroPython: `taw()` = 66,0; `dap((2026, 3, 1))` = 45; `kc(45)` = 0,7265.
 
@@ -617,18 +617,25 @@ import time
 import classificador
 import config_local
 
+NA_PLACA = hasattr(gc, "mem_free")
+if NA_PLACA:
+    agora_us, diferenca_us = time.ticks_us, time.ticks_diff
+else:
+    agora_us = lambda: time.perf_counter_ns() // 1000
+    diferenca_us = lambda fim, inicio: fim - inicio
+
 DIAS = (
     ((42.71, 55, 0.7355, ...), 0),  # 2009-08-13, TAW 43 mm
     ...
 )
 
 gc.collect()
-print("memoria livre:", gc.mem_free(), "bytes")
+print("memoria livre:", gc.mem_free() if NA_PLACA else "(só na placa)", "bytes" if NA_PLACA else "")
 acertos = 0
 for x, esperada in DIAS:
-    t0 = time.ticks_us()
+    t0 = agora_us()
     classe, saidas = classificador.classificar(x)
-    dt = time.ticks_diff(time.ticks_us(), t0)
+    dt = diferenca_us(agora_us(), t0)
     acertos += classe == esperada
     print("%-17s esperado %-17s %6d us" % (classificador.CLASSES[classe],
                                           classificador.CLASSES[esperada], dt))
@@ -636,6 +643,7 @@ print("acertos: %d de %d" % (acertos, len(DIAS)))
 print("TAW deste local (config_local.py): %.1f mm" % config_local.taw())
 ```
 - `DIAS` é uma tupla de pares `(features, classe_esperada)`: 6 dias de 2009, 2 de cada classe, em solos de 35 a 111 mm. O primeiro número de cada dia é o TAW.
+- `NA_PLACA` descobre se o script está no MicroPython: só lá o `gc` tem `mem_free`. No PC, o relógio em µs vem de `time.perf_counter_ns()` (nanossegundos ÷ 1000). `hasattr(objeto, "nome")` responde se o objeto tem aquele atributo. Assim o mesmo teste roda no PC e na placa.
 - `gc` é o coletor de lixo (*garbage collector*). `gc.collect()` libera a memória que não é mais usada, e `gc.mem_free()` mostra quanto sobrou. Isso é específico do MicroPython.
 - `time.ticks_us()` lê um relógio em microssegundos. `time.ticks_diff(fim, início)` faz a subtração do jeito certo mesmo quando o contador "dá a volta" (passa do valor máximo e recomeça do zero). São funções do MicroPython; no Python normal não existem.
 - `acertos += classe == esperada`: a comparação dá `True` (vale 1) ou `False` (vale 0), então soma 1 a cada acerto.
