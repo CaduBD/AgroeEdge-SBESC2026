@@ -13,6 +13,11 @@ RAIZ_M = 0.6
 # data da última poda (ano, mês, dia); atualize a cada poda
 DATA_PODA = (2026, 1, 15)
 
+# irrigação (usados por lamina.py). ASSUMIDO: conferir no sistema instalado
+EFICIENCIA = 0.9     # fração da água do gotejamento que chega à raiz
+AREA_M2 = 7.0        # área de cada planta (espaçamento 3,5 m × 2,0 m)
+VAZAO_L_H = 8.0      # vazão dos gotejadores de uma planta, em litros por hora
+
 
 def taw():
     """Água total disponível no solo, em mm (FAO-56, eq. 82)."""
@@ -20,10 +25,14 @@ def taw():
 
 
 def dap(hoje):
-    """Dias após a poda. hoje = (ano, mês, dia)."""
+    """Dias após a poda. hoje = (ano, mês, dia). O modelo foi treinado com DAP de 0 a 108."""
     a = time.mktime(DATA_PODA + (0, 0, 0, 0, 0, 0))
     b = time.mktime(tuple(hoje) + (0, 0, 0, 0, 0, 0))
     return int((b - a) // 86400)
+
+
+# fração do TAW que a uva gasta sem sofrer (FAO-56, tab. 22). ASSUMIDO: conferir com o Prof. Max
+P_DEPLECAO = 0.35
 
 
 def kc(d):
